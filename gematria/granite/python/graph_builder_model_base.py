@@ -265,9 +265,4 @@ class GraphBuilderModelBase(
   def _add_basic_block_to_batch(self, block: basic_block.BasicBlock) -> None:
     basic_block_was_added = self._batch_graph_builder.add_basic_block(block)
     if not basic_block_was_added:
-      # TODO(ondrasej): Better handling of blocks that can't be added to the
-      # batch. For now, we just let the exception propagate out of the model and
-      # let the user handle it.
-      raise model_base.AddBasicBlockError(
-          f'Basic block could not be added to the batch: {block}'
-      )
+      print(f'Basic block could not be added to the batch: {block}')
