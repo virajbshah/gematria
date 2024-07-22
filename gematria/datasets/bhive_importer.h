@@ -51,7 +51,8 @@ class BHiveImporter {
       llvm::ArrayRef<DisassembledInstruction> disassembled_instructions,
       uint64_t base_address = 0);
 
-  //
+  // Disassembles a block of machine code and returns it as a vector
+  // of `DisassembledInstruction`s.
   absl::StatusOr<std::vector<DisassembledInstruction> >
   DisassembledInstructionsFromMachineCode(llvm::ArrayRef<uint8_t> machine_code,
                                           uint64_t base_address = 0);

@@ -25,6 +25,7 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "gematria/basic_block/basic_block_protos.h"
 #include "gematria/datasets/bhive_importer.h"
 #include "gematria/llvm/canonicalizer.h"
@@ -44,7 +45,7 @@
 namespace gematria {
 
 AnnotatingImporter::AnnotatingImporter(const Canonicalizer *canonicalizer)
-    : importer_(canonicalizer), perf_reader_(), perf_parser_(&perf_reader_) {
+    : importer_(canonicalizer), perf_parser_(&perf_reader_) {
   quipper::PerfParserOptions parser_opts;
   parser_opts.do_remap = true;
   parser_opts.discard_unused_events = true;
@@ -54,20 +55,20 @@ AnnotatingImporter::AnnotatingImporter(const Canonicalizer *canonicalizer)
 
 absl::Status AnnotatingImporter::LoadPerfData(std::string_view file_name) {
   // Read and parse the `perf.data`-like file into something more tractable.
-  if (!perf_reader_.ReadFile(file_name.data())) {
-    return absl::InvalidArgumentError(
-        "The given `perf.data`-like file could not be read.");
+  if (!perf_reader_.ReadFile(std::string(file_name))) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "The given `perf.data`-like file (%s) could not be read.", file_name));
   }
   if (!perf_parser_.ParseRawEvents()) {
-    return absl::InvalidArgumentError(
-        "The given `perf.data`-like file could not be parsed.");
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "The given `perf.data`-like file (%s) could not be parsed.",
+        file_name));
   }
 
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::vector<
-    std::tuple<uint64_t, uint64_t, std::vector<DisassembledInstruction>>>>
+absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
 AnnotatingImporter::GetBlocksFromELF(std::string_view file_name) {
   // Obtain a reference to the underlying object.
   llvm::Expected<llvm::object::OwningBinary<llvm::object::Binary>>
@@ -76,19 +77,27 @@ AnnotatingImporter::GetBlocksFromELF(std::string_view file_name) {
     return LlvmErrorToStatus(std::move(error));
   }
   const llvm::object::Binary &binary = *owning_binary.get().getBinary();
+  if (!binary.isObject()) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("The given binary (%s) is not an object.", file_name));
+  }
   const llvm::object::ObjectFile *object =
       llvm::cast<llvm::object::ObjectFile>(&binary);
+  if (!object) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Could not cast the binary (%s) to an ObjectFile.", file_name));
+  }
 
   // Make sure the object is an ELF file.
   if (!object->isELF() || !object->is64Bit() || !object->isLittleEndian()) {
-    return absl::InvalidArgumentError(
-        "The given object is not in ELF64LE format.");
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "The given object (%s) is not in ELF64LE format.", file_name));
   }
   const auto *elf_object =
       llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(object);
   if (!elf_object) {
-    return absl::InvalidArgumentError(
-        "Could not cast the object to an ELF64LEObjectFile.");
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Could not cast the object (%s) to an ELF64LEObjectFile.", file_name));
   }
 
   // Find file offset to adjust block addresses to start from zero.
@@ -102,6 +111,7 @@ AnnotatingImporter::GetBlocksFromELF(std::string_view file_name) {
         program_header.p_flags & llvm::ELF::PF_R &&
         program_header.p_flags & llvm::ELF::PF_X) {
       file_offset = program_header.p_vaddr;
+      break;
     }
   }
 
@@ -116,9 +126,7 @@ AnnotatingImporter::GetBlocksFromELF(std::string_view file_name) {
   }
 
   // Populate a vector with all of the basic blocks and their addresses.
-  std::vector<
-      std::tuple<uint64_t, uint64_t, std::vector<DisassembledInstruction>>>
-      basic_blocks;
+  std::vector<std::vector<DisassembledInstruction>> basic_blocks;
   llvm::StringRef binary_buf = binary.getData();
   for (const llvm::object::BBAddrMap &map : bb_addr_map.get()) {
     uint64_t function_addr = map.getFunctionAddress();
@@ -139,8 +147,7 @@ AnnotatingImporter::GetBlocksFromELF(std::string_view file_name) {
         }
         // TODO(vbshah): Consider removing the addresses and just using the
         // `addr` fields on the instructions.
-        basic_blocks.emplace_back(begin_idx - file_offset,
-                                  end_idx - file_offset, instructions.value());
+        basic_blocks.push_back(instructions.value());
       }
     }
   }
@@ -153,10 +160,11 @@ absl::StatusOr<std::pair<std::vector<std::string>,
 AnnotatingImporter::GetSamples() {
   const quipper::PerfDataProto &perf_data_proto = perf_reader_.proto();
 
-  // Extract event type information.
-  std::vector<std::string> sample_types(perf_data_proto.event_types_size());
+  // Extract event type information,
+  const int num_sample_types = perf_data_proto.event_types_size();
+  std::vector<std::string> sample_types(num_sample_types);
   std::unordered_map<int, int> event_code_to_idx;
-  for (int sample_type_idx = 0; sample_type_idx < sample_types.size();
+  for (int sample_type_idx = 0; sample_type_idx < num_sample_types;
        ++sample_type_idx) {
     const auto &event_type = perf_data_proto.event_types()[sample_type_idx];
     sample_types[sample_type_idx] = event_type.name();
@@ -184,13 +192,15 @@ AnnotatingImporter::GetSamples() {
       break;
     }
   }
+  const uint64_t mmap_begin_addr = mmap.start();
+  const uint64_t mmap_end_addr = mmap.start() + mmap.len();
   // TODO(virajbshah): Make sure the mapping was found. (Use num_mmap_events)
 
   // If the profile has multiple event types, lookups are needed to find the
   // event type corresponding to a sample. In the other case, this is neither
   // required nor possible - since samples are not associated with IDs for
   // lookup in the proto.
-  const bool has_multiple_sample_types = sample_types.size() > 1;
+  const bool has_multiple_sample_types = num_sample_types > 1;
 
   // Process sample events.
   std::unordered_map<uint64_t, std::vector<int>> samples;
@@ -202,19 +212,18 @@ AnnotatingImporter::GetSamples() {
 
     // Filter out sample events from outside the profiled binary.
     uint64_t sample_ip = event.sample_event().ip();
-    if (!(mmap.start() <= sample_ip && sample_ip < mmap.start() + mmap.len())) {
-      continue;
-    }
+    if (sample_ip < mmap_begin_addr || sample_ip >= mmap_end_addr) continue;
 
-    if (!samples.count(sample_ip)) {
-      samples[sample_ip] = std::vector<int>(sample_types.size(), 0);
+    std::vector<int> &samples_at_same_addr = samples[sample_ip];
+    if (samples_at_same_addr.empty()) {
+      samples_at_same_addr.resize(num_sample_types);
     }
     int event_idx = 0;
     if (has_multiple_sample_types) {
       event_idx =
           event_code_to_idx[event_id_to_code[event.sample_event().id()]];
     }
-    samples[sample_ip][event_idx] += 1;
+    samples_at_same_addr[event_idx] += 1;
   }
 
   return make_pair(sample_types, samples);
@@ -235,7 +244,7 @@ AnnotatingImporter::GetLBRData() {
     const auto &branch_stack = event.sample_event().branch_stack();
     for (int branch_idx = 0; branch_idx + 1 < branch_stack.size();
          ++branch_idx) {
-      const auto &next_branch_entry = branch_stack.at(branch_idx);
+      const auto &next_branch_entry = branch_stack[branch_idx];
       const auto &branch_entry = branch_stack.at(branch_idx + 1);
       if (lbr_data.count(branch_entry.to_ip())) {
         auto &[run_end, cycles_values] = lbr_data[branch_entry.to_ip()];
@@ -266,8 +275,7 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   }
 
   // Get the raw basic blocks, perf samples, and LBR data for annotation.
-  absl::StatusOr<std::vector<
-      std::tuple<uint64_t, uint64_t, std::vector<DisassembledInstruction>>>>
+  absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
       basic_blocks = GetBlocksFromELF(elf_file_name);
   if (!basic_blocks.ok()) {
     return basic_blocks.status();
@@ -286,10 +294,15 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   std::vector<BasicBlockWithThroughputProto> basic_block_protos(
       basic_blocks->size());
   for (int block_idx = 0; block_idx < basic_blocks->size(); ++block_idx) {
+    const std::vector<DisassembledInstruction> &instructions =
+        (*basic_blocks)[block_idx];
+    const uint64_t block_begin_addr = instructions.front().address,
+                   block_end_addr = instructions.back().address +
+                                    instructions.back().machine_code.size();
+
     // Create the un-annotated basic block proto.
-    const auto &[block_begin_addr, block_end_addr, instructions] =
-        basic_blocks->at(block_idx);
-    auto &basic_block_proto = basic_block_protos[block_idx];
+    BasicBlockWithThroughputProto &basic_block_proto =
+        basic_block_protos[block_idx];
     *basic_block_proto.mutable_basic_block() =
         importer_.BasicBlockProtoFromInstructions(instructions);
 

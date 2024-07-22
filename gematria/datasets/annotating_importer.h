@@ -48,8 +48,9 @@ class AnnotatingImporter {
   // Extracts basic blocks from an ELF object, and returns them as tuple
   // consisting the begin address, end address, and a vector of
   // `DisassembledInstruction`s belonging to the basic block.
-  absl::StatusOr<std::vector<
-      std::tuple<uint64_t, uint64_t, std::vector<DisassembledInstruction>>>>
+  // TODO(virajbshah): Remove/refactor this in favor of having a single library
+  // for extracting basic blocks i.e. merge with `extract_bbs_from_obj`.
+  absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
   GetBlocksFromELF(const std::string_view file_name);
 
   // Extracts samples from the `perf.data`-file loaded using `LoadPerfData`,
@@ -62,8 +63,8 @@ class AnnotatingImporter {
                            std::unordered_map<uint64_t, std::vector<int>>>>
   GetSamples();
 
-  // Extracts start and end pairs, as well as lengths in cycles, of sequences of
-  // straight-run code from branch stacks. Returns an unordered_map:
+  // Extracts start and end pairs, as well as latencies in cycles, of sequences
+  // of straight-run code from branch stacks. Returns an unordered_map:
   // `start_addr` -> {`end_addr`, [`cycles_measurements`, ...]}.
   // LBR data is extracted from the `perf.data`-like file loaded using
   // `LoadPerfData`.
