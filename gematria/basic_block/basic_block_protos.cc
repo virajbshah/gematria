@@ -122,17 +122,8 @@ Annotation AnnotationFromProto(const AnnotationProto& proto) {
   return Annotation(
       /* name = */ proto.name(),
       /* value = */ proto.value());
-Annotation AnnotationFromProto(const AnnotationProto& proto) {
-  return Annotation(
-      /* name = */ proto.name(),
-      /* value = */ proto.value());
 }
 
-AnnotationProto ProtoFromAnnotation(const Annotation& annotation) {
-  AnnotationProto proto;
-  proto.set_name(annotation.name);
-  proto.set_value(annotation.value);
-  return proto;
 AnnotationProto ProtoFromAnnotation(const Annotation& annotation) {
   AnnotationProto proto;
   proto.set_name(annotation.name);
@@ -156,21 +147,7 @@ Instruction InstructionFromProto(const CanonicalizedInstructionProto& proto) {
       /* output_operands = */
       ToVector<InstructionOperand>(proto.output_operands(),
                                    InstructionOperandFromProto),
-      /* input_operands = */
-      ToVector<InstructionOperand>(proto.input_operands(),
-                                   InstructionOperandFromProto),
-      /* implicit_input_operands = */
-      ToVector<InstructionOperand>(proto.implicit_input_operands(),
-                                   InstructionOperandFromProto),
-      /* output_operands = */
-      ToVector<InstructionOperand>(proto.output_operands(),
-                                   InstructionOperandFromProto),
       /* implicit_output_operands = */
-      ToVector<InstructionOperand>(proto.implicit_output_operands(),
-                                   InstructionOperandFromProto),
-      /* instruction_annotations = */
-      ToVector<Annotation>(proto.instruction_annotations(),
-                           AnnotationFromProto));
       ToVector<InstructionOperand>(proto.implicit_output_operands(),
                                    InstructionOperandFromProto),
       /* instruction_annotations = */
@@ -187,24 +164,13 @@ CanonicalizedInstructionProto ProtoFromInstruction(
                                    instruction.prefixes.end());
   ToRepeatedPtrField(instruction.input_operands, proto.mutable_input_operands(),
                      ProtoFromInstructionOperand);
-  ToRepeatedPtrField(instruction.input_operands, proto.mutable_input_operands(),
-                     ProtoFromInstructionOperand);
   ToRepeatedPtrField(instruction.implicit_input_operands,
-                     proto.mutable_implicit_input_operands(),
-                     ProtoFromInstructionOperand);
                      proto.mutable_implicit_input_operands(),
                      ProtoFromInstructionOperand);
   ToRepeatedPtrField(instruction.output_operands,
                      proto.mutable_output_operands(),
                      ProtoFromInstructionOperand);
-                     proto.mutable_output_operands(),
-                     ProtoFromInstructionOperand);
   ToRepeatedPtrField(instruction.implicit_output_operands,
-                     proto.mutable_implicit_output_operands(),
-                     ProtoFromInstructionOperand);
-  ToRepeatedPtrField(instruction.instruction_annotations,
-                     proto.mutable_instruction_annotations(),
-                     ProtoFromAnnotation);
                      proto.mutable_implicit_output_operands(),
                      ProtoFromInstructionOperand);
   ToRepeatedPtrField(instruction.instruction_annotations,
@@ -215,8 +181,6 @@ CanonicalizedInstructionProto ProtoFromInstruction(
 
 BasicBlock BasicBlockFromProto(const BasicBlockProto& proto) {
   return BasicBlock(
-      /* instructions = */ ToVector<Instruction>(
-          proto.canonicalized_instructions(), InstructionFromProto));
       /* instructions = */ ToVector<Instruction>(
           proto.canonicalized_instructions(), InstructionFromProto));
 }
