@@ -154,7 +154,7 @@ class GraphBuilderModelBase(
         fp_immediate_token=fp_immediate_token,
         address_token=address_token,
         memory_token=memory_token,
-        annotation_names=set(annotation_names),
+        annotation_names=annotation_names,
         out_of_vocabulary_behavior=self._oov_behavior,
     )
 
@@ -183,7 +183,7 @@ class GraphBuilderModelBase(
 
   @property
   def annotation_names_tensor(self) -> tf.Tensor:
-    return self._annotation_names_tensor
+    return self._annotation_name_tensor
 
   # @Override
   @property
@@ -253,6 +253,9 @@ class GraphBuilderModelBase(
     feed_dict = super()._make_batch_feed_dict()
     feed_dict[self._instruction_node_mask] = np.array(
         self._batch_graph_builder.instruction_node_mask, dtype=bool
+    )
+    feed_dict[self._instruction_annotations] = (
+        self._batch_graph_builder.instruction_annotations
     )
     return feed_dict
 

@@ -28,6 +28,7 @@ import graph_nets
 import sonnet as snt
 import numpy as np
 import tensorflow.compat.v1 as tf
+import tf_keras
 
 
 class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
@@ -153,7 +154,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
     # NOTE(ondrasej): This just creates a closure around the constructor, but it
     # doesn't make any TensorFlow ops until this closure is called, i.e. it is
     # cheap to create or discard this object.
-    leaky_relu = functools.partial(tf.keras.activations.relu, alpha=0.1)
+    leaky_relu = functools.partial(tf_keras.activations.relu, alpha=0.1)
     self._readout_activation = readout_activation or leaky_relu
     self._update_activation = update_activation or leaky_relu
 
@@ -206,7 +207,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
     ]
     readout_input = data
     for size in self._readout_layers:
-      dense = tf.keras.layers.Dense(
+      dense = tf_keras.layers.Dense(
           size,
           activation=self._readout_activation,
           bias_initializer='glorot_normal',
@@ -226,7 +227,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
             ' readout network has no layers.'
         )
     if self._task_readout_input_layer_normalization:
-      layer_normalization = tf.keras.layers.LayerNormalization(
+      layer_normalization = tf_keras.layers.LayerNormalization(
           name='task_readout_input_layer_normalization'
       )
       data = layer_normalization(data)
@@ -237,7 +238,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
     for _ in range(self.num_tasks):
       task_data = data
       for size in self._task_readout_layers:
-        dense = tf.keras.layers.Dense(
+        dense = tf_keras.layers.Dense(
             size,
             activation=self._readout_activation,
             bias_initializer='glorot_normal',
@@ -258,8 +259,8 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
           )
       # Create a linear layer that computes a weighted sum of the output of the
       # last dense layer.
-      linear_layer = tf.keras.layers.Dense(
-          1, activation=tf.keras.activations.linear, use_bias=False
+      linear_layer = tf_keras.layers.Dense(
+          1, activation=tf_keras.activations.linear, use_bias=False
       )
       task_outputs.append(linear_layer(task_data))
       task_variables.extend(linear_layer.trainable_weights)
@@ -271,7 +272,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
     else:
       data = self._graphs_tuple_outputs.globals
     if self._readout_input_layer_normalization:
-      layer_normalization = tf.keras.layers.LayerNormalization(
+      layer_normalization = tf_keras.layers.LayerNormalization(
           name='readout_input_layer_normalization'
       )
       data = layer_normalization(data)
@@ -280,13 +281,19 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
   def _create_graph_network_modules(
       self,
   ) -> Sequence[gnn_model_base.GraphNetworkLayer]:
+    # Disable module-attr around uses of tf_keras.initializers.glorot_normal as
+    # some tf_keras installations setup what is available in tf_keras.initializers
+    # using logic in __init__.py that pytype is not able to understand
+    # correctly.
+    # pytype: disable=module-attr
     mlp_initializers = {
-        'w': tf.keras.initializers.glorot_normal(),
-        'b': tf.keras.initializers.glorot_normal(),
+        'w': tf_keras.initializers.glorot_normal(),
+        'b': tf_keras.initializers.glorot_normal(),
     }
     embedding_initializers = {
-        'embeddings': tf.keras.initializers.glorot_normal(),
+        'embeddings': tf_keras.initializers.glorot_normal(),
     }
+    # pytype: enable=module-attr
     return (
         gnn_model_base.GraphNetworkLayer(
             module=graph_nets.modules.GraphIndependent(
@@ -357,22 +364,14 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
         ),
     )
 
-  def _make_batch_feed_dict(self) -> model_base.FeedDict:
-    feed_dict = super()._make_batch_feed_dict()
-
-    feed_dict[self._instruction_annotations] = (
-        self._batch_graph_builder.instruction_annotations
-    )
-    return feed_dict
-
 
 class TokenGraphBuilderModelNodeEmbed:
-  """`snt.Embed`-like class representing node embeddings with instruction
-  annotations included.
+  """Class representing node embeddings with instruction annotations included.
 
-  Generates node embeddings normally, then replaces the last `num_annotation`
-  values of the embeddings corresponding to instructions with the annotation
-  values. The embeddings for other node types remain unchanged.
+  `snt.Embed`-like class. Generates node embeddings normally, then replaces the
+  last `num_annotation` values of the embeddings corresponding to instructions
+  with the annotation values. The embeddings for other node types remain
+  unchanged.
   """
 
   def __init__(
@@ -395,11 +394,11 @@ class TokenGraphBuilderModelNodeEmbed:
       instruction_node_mask: As in `BasicBlockGraphBuilder`.
       kwargs: Additional arguments to be passed to the internal `snt.Embed`s.
     """
-    self.instruction_annotations = instruction_annotations
-    self.instruction_node_mask = instruction_node_mask
+    self._instruction_annotations = instruction_annotations
+    self._instruction_node_mask = instruction_node_mask
 
     # The first `embed_dim - num_annotations` embedding values for all nodes.
-    self.common_embed = snt.Embed(
+    self._common_embed = snt.Embed(
         embed_dim=common_embed_dim,
         **kwargs,
     )
@@ -408,9 +407,9 @@ class TokenGraphBuilderModelNodeEmbed:
     # Instruction nodes will use instruction annotations instead of these learnt
     # embeddings. This is not required when there are no annotations - in that
     # case, we simply return the common embeddings.
-    self.extra_embed = None
+    self._extra_embed = None
     if num_annotations:
-      self.extra_embed = snt.Embed(
+      self._extra_embed = snt.Embed(
           embed_dim=num_annotations,
           **kwargs,
       )
@@ -419,11 +418,11 @@ class TokenGraphBuilderModelNodeEmbed:
       self,
       inputs,
   ):
-    if not self.extra_embed:
-      return self.common_embed(inputs)
+    if not self._extra_embed:
+      return self._common_embed(inputs)
 
-    common_embeddings = self.common_embed(inputs)
-    extra_embeddings = self.extra_embed(inputs)
+    common_embeddings = self._common_embed(inputs)
+    extra_embeddings = self._extra_embed(inputs)
 
     return tf.concat(
         [
@@ -431,9 +430,9 @@ class TokenGraphBuilderModelNodeEmbed:
             tf.tensor_scatter_nd_update(
                 extra_embeddings,
                 indices=tf.where(
-                    self.instruction_node_mask,
+                    self._instruction_node_mask,
                 ),
-                updates=self.instruction_annotations,
+                updates=self._instruction_annotations,
             ),
         ],
         axis=1,

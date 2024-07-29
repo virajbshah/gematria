@@ -1,5 +1,4 @@
 // Copyright 2024 Google Inc.
-
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
+#include <string>
+#include <vector>
 
-package gematria;
+#include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBufferRef.h"
 
-// Contains annotations to supply additional information to the model, such as
-// cache-miss frequencies, or branching related statistics.
-message AnnotationProto {
-  // A name or label for the annotation.
-  string name = 1;
-  // The annotation value, holding information such as measurements or
-  // statistics like event frequency or rate.
-  double value = 2;
-}
+using namespace llvm;
+
+namespace gematria {
+
+Expected<std::vector<std::string>> getBasicBlockHexValues(
+    MemoryBufferRef binary_memory_buffer);
+
+}  // namespace gematria.
