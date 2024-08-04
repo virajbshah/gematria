@@ -67,6 +67,20 @@ gematria_py_binary(
     ],
 )
 
+gematria_py_test(
+    name = "extract_tokens_file_test",
+    size = "small",
+    srcs = ["extract_tokens_file_test.py"],
+    data = [
+        "extract_tokens_file_tests/lit.cfg.py",
+        "extract_tokens_file_tests/lit.site.cfg.py",
+        ":extract_tokens_file",
+        ":import_from_bhive",
+        "@llvm-project//llvm:FileCheck",
+        "@llvm-project//llvm:split-file",
+    ] + glob(["extract_tokens_file_tests/*.test"]),
+)
+
 gematria_pybind_extension(
     name = "extract_bbs_from_obj",
     srcs = ["extract_bbs_from_obj.cc"],
@@ -103,6 +117,26 @@ gematria_py_test(
 )
 
 gematria_pybind_extension(
+    name = "process_and_filter_bbs",
+    srcs = ["process_and_filter_bbs.cc"],
+    visibility = ["//:internal_users"],
+    deps = [
+        "//gematria/datasets:process_and_filter_bbs_lib",
+        "//gematria/llvm:llvm_to_absl",
+        "@pybind11_abseil_repo//pybind11_abseil:status_casters",
+    ],
+)
+
+gematria_py_test(
+    name = "process_and_filter_bbs_test",
+    size = "small",
+    srcs = ["process_and_filter_bbs_test.py"],
+    deps = [
+        ":process_and_filter_bbs",
+    ],
+)
+
+gematria_pybind_extension(
     name = "annotating_importer",
     srcs = ["annotating_importer.cc"],
     py_deps = [
@@ -133,17 +167,3 @@ gematria_py_binary(
         "//gematria/utils/python:pybind11_abseil_status",
     ],
 )
-
-# gematria_py_test(
-#     name = "extract_tokens_file_test",
-#     size = "small",
-#     srcs = ["extract_tokens_file_test.py"],
-#     data = [
-#         "extract_tokens_file_tests/lit.cfg.py",
-#         "extract_tokens_file_tests/lit.site.cfg.py",
-#         ":extract_tokens_file",
-#         ":import_from_bhive",
-#         "@llvm-project//llvm:FileCheck",
-#         "@llvm-project//llvm:split-file",
-#     ] + glob(["extract_tokens_file_tests/*.test"]),
-# )
