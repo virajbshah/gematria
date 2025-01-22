@@ -30,6 +30,7 @@
 #include "gematria/llvm/canonicalizer.h"
 #include "gematria/llvm/disassembler.h"
 #include "gematria/llvm/llvm_to_absl.h"
+#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/throughput.pb.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/Binary.h"
@@ -44,6 +45,8 @@ namespace gematria {
 
 // Importer for annotated basic blocks.
 class AnnotatingImporter {
+  using AddressRange = std::pair<uint64_t, uint64_t>;
+
  public:
   // Creates a new annotation collector from a given canonicalizer. The
   // canonicalizer must be for the architecture/microarchitecture of the data
@@ -56,7 +59,9 @@ class AnnotatingImporter {
   absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
   GetAnnotatedBasicBlockProtos(std::string_view elf_file_name,
                                std::string_view perf_data_file_name,
-                               std::string_view source_name);
+                               std::string_view source_name,
+                               int back_context_size = 0,
+                               int front_context_size = 0);
 
  private:
   // Loads a `perf.data`-like file for use by the importer. The returned pointer
@@ -117,11 +122,13 @@ class AnnotatingImporter {
   // Extracts start and end pairs belonging to the given mapping, as well as
   // their latencies in cycles, of sequences of straight-run code from
   // LBR branch stacks (pseudo-basic blocks).
-  absl::StatusOr<std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
+  absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
   GetLBRBlocksWithLatency(const llvm::object::ELFObjectFileBase* elf_object,
                           const quipper::PerfDataProto* perf_data,
-                          const quipper::PerfDataProto_MMapEvent* mapping);
+                          const quipper::PerfDataProto_MMapEvent* mapping,
+                          std::string_view source_name,
+                          int back_context_size = 0,
+                          int front_context_size = 0);
 
   BHiveImporter importer_;
   quipper::PerfReader

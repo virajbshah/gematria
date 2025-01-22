@@ -61,73 +61,84 @@ class AnnotatingImporterTest : public ::testing::Test {
 
 TEST_F(AnnotatingImporterTest, AnnotatedBasicBlockProtosFromBinary) {
   std::string test_srcdir = std::string(getenv("TEST_SRCDIR")) + "/";
-
+  // std::string test_srcdir =
+  // std::string("bazel-out/k8-dbg/bin/gematria/datasets/annotating_importer_test.runfiles")
+  // + "/";
   absl::StatusOr<std::vector<BasicBlockWithThroughputProto>> protos =
       x86_annotating_importer_->GetAnnotatedBasicBlockProtos(
           test_srcdir + std::string(kElfObjectFilepath),
-          test_srcdir + std::string(kPerfDataFilepath), kSourceName);
+          test_srcdir + std::string(kPerfDataFilepath), kSourceName,
+          /* back_context_size = */ 1);
 
+  std::cout << "status: " << protos.status() << '\n';
   EXPECT_TRUE(protos.ok());
   EXPECT_EQ(protos->size(), 1);
-  EXPECT_THAT((*protos)[0], EqualsProto(R"pb(
-                basic_block {
-                  machine_instructions {
-                    address: 1739
-                    assembly: "\tmovl\t%ecx, %edx"
-                    machine_code: "\211\312"
-                  }
-                  machine_instructions {
-                    address: 1741
-                    assembly: "\timull\t%edx, %edx"
-                    machine_code: "\017\257\322"
-                  }
-                  machine_instructions {
-                    address: 1744
-                    assembly: "\taddl\t%edx, %eax"
-                    machine_code: "\001\320"
-                  }
-                  machine_instructions {
-                    address: 1746
-                    assembly: "\tdecl\t%ecx"
-                    machine_code: "\377\311"
-                  }
-                  canonicalized_instructions {
-                    mnemonic: "MOV"
-                    llvm_mnemonic: "MOV32rr"
-                    output_operands { register_name: "EDX" }
-                    input_operands { register_name: "ECX" }
-                  }
-                  canonicalized_instructions {
-                    mnemonic: "IMUL"
-                    llvm_mnemonic: "IMUL32rr"
-                    output_operands { register_name: "EDX" }
-                    input_operands { register_name: "EDX" }
-                    input_operands { register_name: "EDX" }
-                    implicit_output_operands { register_name: "EFLAGS" }
-                  }
-                  canonicalized_instructions {
-                    mnemonic: "ADD"
-                    llvm_mnemonic: "ADD32rr"
-                    output_operands { register_name: "EAX" }
-                    input_operands { register_name: "EAX" }
-                    input_operands { register_name: "EDX" }
-                    implicit_output_operands { register_name: "EFLAGS" }
-                  }
-                  canonicalized_instructions {
-                    mnemonic: "DEC"
-                    llvm_mnemonic: "DEC32r"
-                    output_operands { register_name: "ECX" }
-                    input_operands { register_name: "ECX" }
-                    implicit_output_operands { register_name: "EFLAGS" }
-                    instruction_annotations { name: "cycles:u" value: 1 }
-                    instruction_annotations { name: "instructions:u" value: 1 }
-                  }
-                }
-                inverse_throughputs {
-                  source: "test: skl"
-                  inverse_throughput_cycles: 1.532258064516129
-                }
-              )pb"));
+  EXPECT_THAT(
+      (*protos)[0], EqualsProto(R"pb(
+        basic_block {
+          machine_instructions {
+            address: 1739
+            assembly: "\tmovl\t%ecx, %edx"
+            machine_code: "\211\312"
+          }
+          machine_instructions {
+            address: 1741
+            assembly: "\timull\t%edx, %edx"
+            machine_code: "\017\257\322"
+          }
+          machine_instructions {
+            address: 1744
+            assembly: "\taddl\t%edx, %eax"
+            machine_code: "\001\320"
+          }
+          machine_instructions {
+            address: 1746
+            assembly: "\tdecl\t%ecx"
+            machine_code: "\377\311"
+          }
+          canonicalized_instructions {
+            mnemonic: "MOV"
+            llvm_mnemonic: "MOV32rr"
+            output_operands { register_name: "EDX" }
+            input_operands { register_name: "ECX" }
+          }
+          canonicalized_instructions {
+            mnemonic: "IMUL"
+            llvm_mnemonic: "IMUL32rr"
+            output_operands { register_name: "EDX" }
+            input_operands { register_name: "EDX" }
+            input_operands { register_name: "EDX" }
+            implicit_output_operands { register_name: "EFLAGS" }
+          }
+          canonicalized_instructions {
+            mnemonic: "ADD"
+            llvm_mnemonic: "ADD32rr"
+            output_operands { register_name: "EAX" }
+            input_operands { register_name: "EAX" }
+            input_operands { register_name: "EDX" }
+            implicit_output_operands { register_name: "EFLAGS" }
+          }
+          canonicalized_instructions {
+            mnemonic: "DEC"
+            llvm_mnemonic: "DEC32r"
+            output_operands { register_name: "ECX" }
+            input_operands { register_name: "ECX" }
+            implicit_output_operands { register_name: "EFLAGS" }
+            instruction_annotations { name: "cycles:u" value: 1 }
+            instruction_annotations { name: "instructions:u" value: 1 }
+          }
+        }
+        inverse_throughputs {
+          source: "test: skl"
+          inverse_throughput_cycles: [
+            1, 1, 1, 1, 1, 1,  1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 2, 1, 11, 1, 1, 1, 5, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 2, 3, 1, 1,  1, 3, 1, 2, 1, 1, 5, 1, 1, 1, 1, 1, 1, 1
+          ]
+        }
+      )pb"));
+
+  // EXPECT_FALSE(true);
 }
 
 }  // namespace

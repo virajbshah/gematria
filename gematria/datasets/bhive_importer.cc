@@ -65,16 +65,22 @@ BHiveImporter::BHiveImporter(const Canonicalizer* canonicalizer)
           *target_machine_.getMCAsmInfo(), *target_machine_.getMCInstrInfo(),
           *target_machine_.getMCRegisterInfo())) {}
 
+MachineInstructionProto BHiveImporter::MachineInstructionProtoFromInstruction(
+    const DisassembledInstruction& instruction) {
+  MachineInstructionProto machine_instruction;
+  machine_instruction.set_address(instruction.address);
+  machine_instruction.set_assembly(instruction.assembly);
+  machine_instruction.set_machine_code(instruction.machine_code);
+  return machine_instruction;
+}
+
 BasicBlockProto BHiveImporter::BasicBlockProtoFromInstructions(
     llvm::ArrayRef<DisassembledInstruction> disassembled_instructions,
     uint64_t base_address /*= 0*/) {
   BasicBlockProto basic_block_proto;
   for (const DisassembledInstruction& instruction : disassembled_instructions) {
-    MachineInstructionProto& machine_instruction =
-        *basic_block_proto.add_machine_instructions();
-    machine_instruction.set_address(instruction.address);
-    machine_instruction.set_assembly(instruction.assembly);
-    machine_instruction.set_machine_code(instruction.machine_code);
+    *basic_block_proto.add_machine_instructions() =
+        MachineInstructionProtoFromInstruction(instruction);
     *basic_block_proto.add_canonicalized_instructions() = ProtoFromInstruction(
         canonicalizer_.InstructionFromMCInst(instruction.mc_inst));
   }
