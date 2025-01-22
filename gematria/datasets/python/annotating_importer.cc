@@ -54,7 +54,8 @@ PYBIND11_MODULE(annotating_importer, m) {
           "get_annotated_basic_block_protos",
           &AnnotatingImporter::GetAnnotatedBasicBlockProtos,
           py::arg("elf_file_name"), py::arg("perf_data_file_name"),
-          py::arg("source_name"),
+          py::arg("source_name"), py::arg("back_context_size") = 0,
+          py::arg("front_context_size") = 0,
           R"(Creates annotated BasicBlockProtos from an ELF object and samples.
           
           Reads an ELF object along with a corresponding `perf.data`-like file
@@ -69,6 +70,10 @@ PYBIND11_MODULE(annotating_importer, m) {
               which samples are to be extracted along with LBR data.
             source_name: The source name the timing data in the annotated
               `BasicBlockProto`s should be attributed to.
+            back_context_size: The maximum length in blocks of the back context
+              of each block.
+            front_context_size: The maximum length in blocks of the front
+              context of each block.
               
           Returns:
             A list of annotated `BasicBlockProto`s.

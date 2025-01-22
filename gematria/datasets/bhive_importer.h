@@ -45,6 +45,11 @@ class BHiveImporter {
   // Does not take ownership of the canonicalizer.
   explicit BHiveImporter(const Canonicalizer* canonicalizer);
 
+  // Creates a `MachineInstructionProto` from the given
+  // `DisassembledInstruction`.
+  MachineInstructionProto MachineInstructionProtoFromInstruction(
+      const DisassembledInstruction& instruction);
+
   // Creates a basic block from the given instructions. Uses `base_address` as
   // the address of the first instruction; the addresses of following
   // instructions are derived from `base_address` and the sizes of the
