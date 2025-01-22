@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <ostream>
@@ -34,6 +35,7 @@ namespace {
 
 constexpr BasicBlockGraphBuilder::NodeIndex kInvalidNode(-1);
 constexpr BasicBlockGraphBuilder::TokenIndex kInvalidTokenIndex(-1);
+constexpr uint64_t kUnknownAddress(0);
 
 std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> MakeIndex(
     std::vector<std::string> items) {
@@ -93,6 +95,7 @@ std::ostream& operator<<(std::ostream& os, EdgeType edge_type) {
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressSegmentRegister);
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressDisplacement);
     EXEGESIS_ENUM_CASE(os, EdgeType::kReverseStructuralDependency);
+    EXEGESIS_ENUM_CASE(os, EdgeType::kTakenBranch);
     EXEGESIS_ENUM_CASE(os, EdgeType::kInstructionPrefix);
   }
   return os;
@@ -183,7 +186,7 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
 
   // Store row indices corresponding to specific annotation names.
   int annotation_idx = 0;
-  for (auto& annotation_name : annotation_names_) {
+  for (const auto& annotation_name : annotation_names_) {
     annotation_name_to_idx_[annotation_name] = annotation_idx;
     ++annotation_idx;
   }
@@ -204,6 +207,9 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
   const int prev_num_edges = num_edges();
 
   NodeIndex previous_instruction_node = kInvalidNode;
+  bool previous_instruction_is_conditional_branch = false;
+  bool previous_instruction_is_unconditional_branch = false;
+  uint64_t expected_instruction_address = kUnknownAddress;
   const struct {
     const std::vector<Instruction>& instruction_group;
     bool is_context;
@@ -239,8 +245,19 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
 
       // Add a structural dependency edge from the previous instruction.
       if (previous_instruction_node >= 0) {
-        AddEdge(EdgeType::kStructuralDependency, previous_instruction_node,
-                instruction_node);
+        if (previous_instruction_is_unconditional_branch ||
+            (previous_instruction_is_conditional_branch &&
+             instruction.address != expected_instruction_address)) {
+          AddEdge(EdgeType::kTakenBranch, previous_instruction_node,
+                  instruction_node);
+        } else {
+          AddEdge(EdgeType::kStructuralDependency, previous_instruction_node,
+                  instruction_node);
+        }
+
+        previous_instruction_is_conditional_branch = false;
+        previous_instruction_is_unconditional_branch = false;
+        expected_instruction_address = kUnknownAddress;
       }
 
       // Add edges for input operands. And nodes too, if necessary.
@@ -262,6 +279,21 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
       }
 
       previous_instruction_node = instruction_node;
+
+      // Check if the instruction is a taken branch to choose the edge type
+      // connecting it to the next instruction.
+      // TODO(vbshah): Consider using a better way to check for branching
+      // instructions.
+      const std::string_view instruction_mnemonic_start(
+          instruction.llvm_mnemonic.data(), 3);
+      if (instruction_mnemonic_start == "JCC") {
+        previous_instruction_is_conditional_branch = true;
+        expected_instruction_address = instruction.address + instruction.size;
+      } else if (instruction_mnemonic_start == "JMP" ||
+                 instruction_mnemonic_start == "CALL" ||
+                 instruction_mnemonic_start == "RET") {
+        previous_instruction_is_unconditional_branch = true;
+      }
     }
   }
 
@@ -496,9 +528,10 @@ void StrAppendList(std::stringstream& buffer, std::string_view list_name,
   buffer << list_name << " = [";
   bool first = true;
   for (const auto& item : items) {
-    if (!first) {
-      buffer << ",";
+    if (first) {
       first = false;
+    } else {
+      buffer << ", ";
     }
     buffer << item;
   }

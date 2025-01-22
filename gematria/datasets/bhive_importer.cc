@@ -87,6 +87,23 @@ BasicBlockProto BHiveImporter::BasicBlockProtoFromInstructions(
   return basic_block_proto;
 }
 
+absl::StatusOr<DisassembledInstruction>
+BHiveImporter::SingleDisassembledInstructionFromMachineCode(
+    llvm::ArrayRef<uint8_t> machine_code, uint64_t base_address /* = 0 */
+) {
+  llvm::Expected<DisassembledInstruction> instruction =
+      DisassembleOneInstruction(*disassembler_,
+                                *target_machine_.getMCInstrInfo(),
+                                *target_machine_.getMCRegisterInfo(),
+                                *target_machine_.getMCSubtargetInfo(),
+                                *mc_inst_printer_, base_address, machine_code);
+  if (llvm::Error error = instruction.takeError()) {
+    return LlvmErrorToStatus(std::move(error));
+  }
+
+  return *instruction;
+}
+
 absl::StatusOr<std::vector<DisassembledInstruction>>
 BHiveImporter::DisassembledInstructionsFromMachineCode(
     llvm::ArrayRef<uint8_t> machine_code, uint64_t base_address /* = 0 */) {

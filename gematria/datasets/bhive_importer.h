@@ -58,6 +58,11 @@ class BHiveImporter {
       llvm::ArrayRef<DisassembledInstruction> disassembled_instructions,
       uint64_t base_address = 0);
 
+  // Disassembles a single instruction from the given address.
+  absl::StatusOr<DisassembledInstruction>
+  SingleDisassembledInstructionFromMachineCode(
+      llvm::ArrayRef<uint8_t> machine_code, uint64_t base_address = 0);
+
   // Converts machine code in the form of an array of bytes into gematria
   // DisassembledInstructions that can more easily be used by downstream
   // tooling.

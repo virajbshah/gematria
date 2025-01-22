@@ -61,16 +61,12 @@ class AnnotatingImporterTest : public ::testing::Test {
 
 TEST_F(AnnotatingImporterTest, AnnotatedBasicBlockProtosFromBinary) {
   std::string test_srcdir = std::string(getenv("TEST_SRCDIR")) + "/";
-  // std::string test_srcdir =
-  // std::string("bazel-out/k8-dbg/bin/gematria/datasets/annotating_importer_test.runfiles")
-  // + "/";
+
   absl::StatusOr<std::vector<BasicBlockWithThroughputProto>> protos =
       x86_annotating_importer_->GetAnnotatedBasicBlockProtos(
           test_srcdir + std::string(kElfObjectFilepath),
-          test_srcdir + std::string(kPerfDataFilepath), kSourceName,
-          /* back_context_size = */ 1);
+          test_srcdir + std::string(kPerfDataFilepath), kSourceName);
 
-  std::cout << "status: " << protos.status() << '\n';
   EXPECT_TRUE(protos.ok());
   EXPECT_EQ(protos->size(), 1);
   EXPECT_THAT(
@@ -95,6 +91,11 @@ TEST_F(AnnotatingImporterTest, AnnotatedBasicBlockProtosFromBinary) {
             address: 1746
             assembly: "\tdecl\t%ecx"
             machine_code: "\377\311"
+          }
+          machine_instructions {
+            address: 1748
+            assembly: "\tjne\t-11"
+            machine_code: "u\365"
           }
           canonicalized_instructions {
             mnemonic: "MOV"
@@ -127,6 +128,13 @@ TEST_F(AnnotatingImporterTest, AnnotatedBasicBlockProtosFromBinary) {
             instruction_annotations { name: "cycles:u" value: 1 }
             instruction_annotations { name: "instructions:u" value: 1 }
           }
+          canonicalized_instructions {
+            mnemonic: "JNE"
+            llvm_mnemonic: "JCC_1"
+            input_operands { immediate_value: 18446744073709551605 }
+            input_operands { immediate_value: 5 }
+            implicit_input_operands { register_name: "EFLAGS" }
+          }
         }
         inverse_throughputs {
           source: "test: skl"
@@ -137,8 +145,6 @@ TEST_F(AnnotatingImporterTest, AnnotatedBasicBlockProtosFromBinary) {
           ]
         }
       )pb"));
-
-  // EXPECT_FALSE(true);
 }
 
 }  // namespace

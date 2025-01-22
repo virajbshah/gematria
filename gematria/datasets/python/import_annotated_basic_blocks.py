@@ -58,6 +58,18 @@ _SOURCE_NAME = flags.DEFINE_string(
     'The name of the throughput source used for the throughput data.',
     required=False,
 )
+_BACK_CONTEXT_SIZE = flags.DEFINE_integer(
+    'gematria_back_context_size',
+    0,
+    'The maximum length in blocks of the back context of each imported block.',
+    required=False,
+)
+_FRONT_CONTEXT_SIZE = flags.DEFINE_integer(
+    'gematria_front_context_size',
+    0,
+    'The maximum length in blocks of the front context of each imported block.',
+    required=False,
+)
 _LLVM_TRIPLE = flags.DEFINE_string(
     'gematria_llvm_triple',
     'x86_64',
@@ -88,6 +100,8 @@ def main(argv: Sequence[str]) -> None:
       _INPUT_ELF_FILE.value,
       _INPUT_PERF_FILE.value,
       _SOURCE_NAME.value,
+      _BACK_CONTEXT_SIZE.value,
+      _FRONT_CONTEXT_SIZE.value,
   )
 
   with tf.io.TFRecordWriter(_OUTPUT_TFRECORD_FILE.value) as writer:

@@ -30,7 +30,6 @@
 #include "gematria/llvm/canonicalizer.h"
 #include "gematria/llvm/disassembler.h"
 #include "gematria/llvm/llvm_to_absl.h"
-#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/throughput.pb.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/Binary.h"
@@ -96,9 +95,16 @@ class AnnotatingImporter {
 
   // Disassembles and returns instructions between two addresses in an ELF
   // object.
-  absl::StatusOr<std::vector<DisassembledInstruction>> GetELFSlice(
-      const llvm::object::ELFObjectFileBase* elf_object, uint64_t range_begin,
-      uint64_t range_end, uint64_t offset);
+  absl::StatusOr<std::vector<DisassembledInstruction>>
+  GetInstructionsInAddressRange(
+      const llvm::object::ELFObjectFileBase* elf_object,
+      AddressRange address_range, uint64_t offset);
+
+  // Disassembles and returns a single instruction at a given address from an
+  // ELF object.
+  absl::StatusOr<DisassembledInstruction> GetInstructionAtAddress(
+      const llvm::object::ELFObjectFileBase* elf_object, uint64_t address,
+      uint64_t offset);
 
   // Extracts basic blocks from an ELF object, and returns them as tuple
   // consisting the begin address, end address, and a vector of
