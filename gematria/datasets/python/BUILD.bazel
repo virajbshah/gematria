@@ -120,6 +120,15 @@ gematria_py_binary(
     ],
 )
 
+gematria_py_binary(
+    name = "process_dataset",
+    srcs = ["process_dataset.py"],
+    deps = [
+        "//gematria/io/python:tfrecord",
+        "//gematria/proto:throughput_py_pb2",
+    ],
+)
+
 gematria_pybind_extension(
     name = "extract_bbs_from_obj",
     srcs = ["extract_bbs_from_obj.cc"],

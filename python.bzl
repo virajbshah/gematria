@@ -16,8 +16,15 @@
 load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
-def gematria_py_binary(name = None, **kwargs):
-    py_binary(name = name, **kwargs)
+def gematria_py_binary(name = None, visibility = [], **kwargs):
+    if "//visibility:public" in visibility or "//visibility:private" in visibility:
+        py_binary(name = name, visibility = visibility, **kwargs)
+    else:
+        py_binary(
+            name = name,
+            visibility = visibility + ["//tools:__subpackages__"],
+            **kwargs
+        )
 
 def gematria_py_library(name = None, **kwargs):
     py_library(name = name, **kwargs)

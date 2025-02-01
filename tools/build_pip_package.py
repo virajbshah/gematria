@@ -32,18 +32,33 @@ SHARED_OBJECT_MANIFEST_PATH = os.path.join(
     os.path.dirname(__file__), 'shared_object_list.txt'
 )
 
+THIRD_PARTY_PYTHON_PACKAGES = ['graph_nets', 'pybind11_abseil', 'sonnet']
+
 # Grab the shared objects from the manifest created by the Bazel //tools:shared_object_list target
 with open(SHARED_OBJECT_MANIFEST_PATH) as shared_object_manfiest:
   shared_objects = shared_object_manfiest.read().strip().split(' ')
 
-requirements = []
+package_data = {}
+for shared_object in shared_objects:
+  *path, basename = shared_object.split('/')
+  package = '.'.join(path)
+  if package in package_data:
+    package_data[package].append(basename)
+  else:
+    package_data[package] = [basename]
 
 # Get the package dependencies from requirements.in
 with open('requirements.in') as requirements_file:
-  required_packages = [
+  requirements = [
       str(requirement)
       for requirement in pkg_resources.parse_requirements(requirements_file)
   ]
+
+packages = find_packages(include=['gematria*'])
+package_dir = {'gematria': 'gematria'}
+for package in THIRD_PARTY_PYTHON_PACKAGES:
+  packages += find_packages(f'external/{package}_repo')
+  package_dir[package] = f'external/{package}_repo/{package}'
 
 setup(
     name='gematria',
@@ -51,7 +66,8 @@ setup(
     description='Tooling for cost modelling',
     author='Gematria Authors',
     install_requires=requirements,
-    packages=find_packages() + [''],
-    package_data={'': shared_objects},
+    packages=packages,
+    package_dir=package_dir,
+    package_data=package_data,
     python_requires='>=3.10',
 )
