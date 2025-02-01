@@ -26,11 +26,11 @@ PACKAGE_PYTHON_DEPS = [
     # "//gematria/datasets/pipelines:benchmark_bbs",
     # "//gematria/datasets/pipelines:benchmark_bbs_lib",
     # "//gematria/datasets/pipelines:compile_modules",
-    "//gematria/datasets/python:extract_tokens_file",
-    "//gematria/datasets/python:import_annotated_basic_blocks",
-    "//gematria/datasets/python:import_from_bhive",
+    # "//gematria/datasets/python:extract_tokens_file",
+    # "//gematria/datasets/python:import_annotated_basic_blocks",
+    # "//gematria/datasets/python:import_from_bhive",
     "//gematria/granite/python:run_granite_model",
-    "//gematria/sequence/python:run_sequence_model",
+    # "//gematria/sequence/python:run_sequence_model",
 ]
 
 genrule(
