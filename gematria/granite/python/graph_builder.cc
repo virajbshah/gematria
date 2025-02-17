@@ -56,6 +56,7 @@ PYBIND11_MODULE(graph_builder, m) {
       .value("STRUCTURAL_DEPENDENCY", EdgeType::kStructuralDependency)
       .value("REVERSE_STRUCTURAL_DEPENDENCY",
              EdgeType::kReverseStructuralDependency)
+      .value("TAKEN_BRANCH", EdgeType::kTakenBranch)
       .value("INPUT_OPERANDS", EdgeType::kInputOperands)
       .value("OUTPUT_OPERANDS", EdgeType::kOutputOperands)
       .value("ADDRESS_BASE_REGISTER", EdgeType::kAddressBaseRegister)

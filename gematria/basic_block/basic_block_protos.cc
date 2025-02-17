@@ -15,12 +15,14 @@
 #include "gematria/basic_block/basic_block_protos.h"
 
 #include <algorithm>
+#include <cassert>
 #include <iterator>
 #include <string>
 #include <vector>
 
 #include "gematria/basic_block/basic_block.h"
 #include "gematria/proto/annotation.pb.h"
+#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/canonicalized_instruction.pb.h"
 #include "google/protobuf/repeated_ptr_field.h"
 
@@ -44,7 +46,7 @@ void ToRepeatedPtrField(
     google::protobuf::RepeatedPtrField<Proto>* repeated_field,
     Convertor proto_from_object) {
   repeated_field->Reserve(std::size(objects));
-  std::transform(std::begin(objects), std::end(objects),
+  std::transform(std::cbegin(objects), std::cend(objects),
                  google::protobuf::RepeatedFieldBackInserter(repeated_field),
                  proto_from_object);
 }
@@ -179,7 +181,7 @@ CanonicalizedInstructionProto ProtoFromInstruction(
 }
 
 BasicBlock BasicBlockFromProto(const BasicBlockProto& proto) {
-  return BasicBlock(
+  BasicBlock basic_block(
       /* instructions = */
       ToVector<Instruction>(proto.canonicalized_instructions(),
                             InstructionFromProto),
@@ -189,6 +191,35 @@ BasicBlock BasicBlockFromProto(const BasicBlockProto& proto) {
       /* following_context = */
       ToVector<Instruction>(proto.canonicalized_following_context(),
                             InstructionFromProto));
+
+  // TODO(vbshah): Update each instruction in-place without making a copy.
+  const auto add_address_and_size_to_instruction =
+      [](Instruction instruction, const MachineInstructionProto& proto) {
+        instruction.address = proto.address();
+        instruction.size = proto.machine_code().size();
+        return instruction;
+      };
+  if (proto.machine_instructions_size() == basic_block.instructions.size()) {
+    auto& instructions = basic_block.instructions;
+    std::transform(instructions.cbegin(), instructions.cend(),
+                   proto.machine_instructions().cbegin(), instructions.begin(),
+                   add_address_and_size_to_instruction);
+  }
+  if (proto.machine_preceding_context_size() ==
+      basic_block.preceding_context.size()) {
+    auto& instructions = basic_block.preceding_context;
+    std::transform(instructions.cbegin(), instructions.cend(),
+                   proto.machine_preceding_context().cbegin(),
+                   instructions.begin(), add_address_and_size_to_instruction);
+  }
+  if (proto.machine_following_context_size() ==
+      basic_block.following_context.size()) {
+    auto& instructions = basic_block.following_context;
+    std::transform(instructions.cbegin(), instructions.cend(),
+                   proto.machine_following_context().cbegin(),
+                   instructions.begin(), add_address_and_size_to_instruction);
+  }
+  return basic_block;
 }
 
 }  // namespace gematria

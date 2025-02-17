@@ -227,8 +227,8 @@ class GraphBuilderModelBaseTest(parameterized.TestCase, model_test.TestCase):
         throughput.BasicBlockWithThroughput(
             block=basic_block.BasicBlock(
                 instructions=original.block.instructions,
-                back_context=original.block.instructions,
-                front_context=original.block.instructions,
+                preceding_context=original.block.instructions,
+                following_context=original.block.instructions,
             ),
             throughputs=original.throughputs,
         )

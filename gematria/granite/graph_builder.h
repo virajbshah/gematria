@@ -130,7 +130,8 @@ enum class EdgeType {
   // embedding vector table; removing it would change the size of this table and
   // it would invalidate existing checkpoints.
   kReverseStructuralDependency = 7,
-  kInstructionPrefix = 8,
+  kTakenBranch = 8,
+  kInstructionPrefix = 9,
 };
 
 std::ostream& operator<<(std::ostream& os, NodeType node_type);
