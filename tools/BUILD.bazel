@@ -1,7 +1,4 @@
-load(
-    "//:python.bzl",
-    "gematria_py_binary",
-)
+load("//:python.bzl", "gematria_py_binary",)
 
 package(
     default_visibility = ["//visibility:private"],
@@ -12,6 +9,7 @@ PACKAGE_SHARED_OBJECT_DEPS = [
     "//gematria/llvm/python:llvm_architecture_support.so",
     "//gematria/basic_block/python:basic_block_protos.so",
     "//gematria/basic_block/python:basic_block.so",
+    "//gematria/datasets/python:annotating_importer.so",
     "//gematria/datasets/python:bhive_importer.so",
     "//gematria/granite/python:graph_builder.so",
     "//gematria/model/python:oov_token_behavior.so",
@@ -21,10 +19,16 @@ PACKAGE_SHARED_OBJECT_DEPS = [
     "//:package_pybind11_abseil_status",
 ]
 
-PACKAGE_PYTHON_DEPS = [
-    "//gematria/proto:basic_block_py_pb2",
-    "//gematria/proto:canonicalized_instruction_py_pb2",
-    "//gematria/proto:throughput_py_pb2",
+# The list of `gematria_py_binary` targets that will be included in the wheel.
+PACKAGE_PY_BINARIES = [
+    "//gematria/datasets/pipelines:benchmark_bbs",
+    "//gematria/datasets/pipelines:benchmark_bbs_lib",
+    "//gematria/datasets/pipelines:compile_modules",
+    "//gematria/datasets/python:extract_tokens_file",
+    "//gematria/datasets/python:import_annotated_basic_blocks",
+    "//gematria/datasets/python:import_from_bhive",
+    "//gematria/granite/python:run_granite_model",
+    "//gematria/sequence/python:run_sequence_model",
 ]
 
 genrule(
@@ -37,7 +41,7 @@ genrule(
 gematria_py_binary(
     name = "build_pip_package",
     srcs = ["build_pip_package.py"],
-    data = PACKAGE_SHARED_OBJECT_DEPS + PACKAGE_PYTHON_DEPS + [
+    data = PACKAGE_PY_BINARIES + [
         "//:requirements.in",
         "//tools:shared_object_list",
     ],
