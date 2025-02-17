@@ -14,16 +14,8 @@
 
 #include "gematria/datasets/annotating_importer.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <tuple>
-#include <vector>
-
 #include "gematria/llvm/canonicalizer.h"
-#include "llvm/Support/Error.h"
+#include "pybind11/attr.h"
 #include "pybind11/cast.h"
 #include "pybind11/detail/common.h"
 #include "pybind11/pybind11.h"
@@ -54,7 +46,8 @@ PYBIND11_MODULE(annotating_importer, m) {
           "get_annotated_basic_block_protos",
           &AnnotatingImporter::GetAnnotatedBasicBlockProtos,
           py::arg("elf_file_name"), py::arg("perf_data_file_name"),
-          py::arg("source_name"),
+          py::arg("source_name"), py::arg("preceding_context_size") = 0,
+          py::arg("following_context_size") = 0,
           R"(Creates annotated BasicBlockProtos from an ELF object and samples.
           
           Reads an ELF object along with a corresponding `perf.data`-like file
@@ -69,6 +62,10 @@ PYBIND11_MODULE(annotating_importer, m) {
               which samples are to be extracted along with LBR data.
             source_name: The source name the timing data in the annotated
               `BasicBlockProto`s should be attributed to.
+            preceding_context_size: The maximum length in blocks of the
+              preceding context of each block.
+            following_context_size: The maximum length in blocks of the
+              following context of each block.
               
           Returns:
             A list of annotated `BasicBlockProto`s.

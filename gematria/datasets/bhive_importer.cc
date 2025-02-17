@@ -65,20 +65,43 @@ BHiveImporter::BHiveImporter(const Canonicalizer* canonicalizer)
           *target_machine_.getMCAsmInfo(), *target_machine_.getMCInstrInfo(),
           *target_machine_.getMCRegisterInfo())) {}
 
+MachineInstructionProto BHiveImporter::MachineInstructionProtoFromInstruction(
+    const DisassembledInstruction& instruction) {
+  MachineInstructionProto machine_instruction;
+  machine_instruction.set_address(instruction.address);
+  machine_instruction.set_assembly(instruction.assembly);
+  machine_instruction.set_machine_code(instruction.machine_code);
+  return machine_instruction;
+}
+
 BasicBlockProto BHiveImporter::BasicBlockProtoFromInstructions(
     llvm::ArrayRef<DisassembledInstruction> disassembled_instructions,
     uint64_t base_address /*= 0*/) {
   BasicBlockProto basic_block_proto;
   for (const DisassembledInstruction& instruction : disassembled_instructions) {
-    MachineInstructionProto& machine_instruction =
-        *basic_block_proto.add_machine_instructions();
-    machine_instruction.set_address(instruction.address);
-    machine_instruction.set_assembly(instruction.assembly);
-    machine_instruction.set_machine_code(instruction.machine_code);
+    *basic_block_proto.add_machine_instructions() =
+        MachineInstructionProtoFromInstruction(instruction);
     *basic_block_proto.add_canonicalized_instructions() = ProtoFromInstruction(
         canonicalizer_.InstructionFromMCInst(instruction.mc_inst));
   }
   return basic_block_proto;
+}
+
+absl::StatusOr<DisassembledInstruction>
+BHiveImporter::SingleDisassembledInstructionFromMachineCode(
+    llvm::ArrayRef<uint8_t> machine_code, uint64_t base_address /* = 0 */
+) {
+  llvm::Expected<DisassembledInstruction> instruction =
+      DisassembleOneInstruction(*disassembler_,
+                                *target_machine_.getMCInstrInfo(),
+                                *target_machine_.getMCRegisterInfo(),
+                                *target_machine_.getMCSubtargetInfo(),
+                                *mc_inst_printer_, base_address, machine_code);
+  if (llvm::Error error = instruction.takeError()) {
+    return LlvmErrorToStatus(std::move(error));
+  }
+
+  return *instruction;
 }
 
 absl::StatusOr<std::vector<DisassembledInstruction>>

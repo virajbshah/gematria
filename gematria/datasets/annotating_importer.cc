@@ -14,8 +14,8 @@
 
 #include "gematria/datasets/annotating_importer.h"
 
+#include <algorithm>
 #include <cstdint>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -34,6 +34,7 @@
 #include "gematria/llvm/canonicalizer.h"
 #include "gematria/llvm/disassembler.h"
 #include "gematria/llvm/llvm_to_absl.h"
+#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/throughput.pb.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -163,10 +164,11 @@ AnnotatingImporter::GetELFFromBinary(const llvm::object::Binary *binary) {
 }
 
 absl::StatusOr<std::vector<DisassembledInstruction>>
-AnnotatingImporter::GetELFSlice(
-    const llvm::object::ELFObjectFileBase *elf_object, uint64_t range_begin,
-    uint64_t range_end, uint64_t offset) {
+AnnotatingImporter::GetInstructionsInAddressRange(
+    const llvm::object::ELFObjectFileBase *elf_object,
+    AddressRange address_range, uint64_t offset) {
   llvm::StringRef binary_buf = elf_object->getData();
+  auto [range_begin, range_end] = address_range;
 
   llvm::ArrayRef<uint8_t> machine_code(
       reinterpret_cast<const uint8_t *>(
@@ -179,6 +181,28 @@ AnnotatingImporter::GetELFSlice(
     return instructions.status();
   }
   return instructions;
+}
+
+absl::StatusOr<DisassembledInstruction>
+AnnotatingImporter::GetInstructionAtAddress(
+    const llvm::object::ELFObjectFileBase *elf_object, uint64_t address,
+    uint64_t offset) {
+  llvm::StringRef binary_buf = elf_object->getData();
+
+  constexpr int kMaxInstructionSize = 15;
+  llvm::ArrayRef<uint8_t> machine_code(
+      reinterpret_cast<const uint8_t *>(
+          binary_buf
+              .slice(address + offset, address + offset + kMaxInstructionSize)
+              .data()),
+      kMaxInstructionSize);
+  absl::StatusOr<DisassembledInstruction> instruction =
+      importer_.SingleDisassembledInstructionFromMachineCode(machine_code,
+                                                             address);
+  if (!instruction.ok()) {
+    return instruction.status();
+  }
+  return instruction;
 }
 
 absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
@@ -227,8 +251,8 @@ AnnotatingImporter::GetBlocksFromELF(
         if (begin_idx == end_idx) {
           continue;  // Skip any empty basic blocks.
         }
-        const auto &basic_block =
-            GetELFSlice(elf_object, begin_idx, end_idx, main_header->p_vaddr);
+        const auto &basic_block = GetInstructionsInAddressRange(
+            elf_object, AddressRange(begin_idx, end_idx), main_header->p_vaddr);
         if (!basic_block.ok()) {
           return basic_block.status();
         }
@@ -305,12 +329,13 @@ AnnotatingImporter::GetSamples(
   return make_pair(sample_types, samples);
 }
 
-absl::StatusOr<std::vector<
-    std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
+absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
 AnnotatingImporter::GetLBRBlocksWithLatency(
     const llvm::object::ELFObjectFileBase *elf_object,
     const quipper::PerfDataProto *perf_data,
-    const quipper::PerfDataProto_MMapEvent *mapping) {
+    const quipper::PerfDataProto_MMapEvent *mapping,
+    const std::string_view source_name, int preceding_context_size,
+    int following_context_size) {
   // TODO(vbshah): Refactor this and other parameters as function arguments.
   constexpr int kMaxBlockSizeBytes = 65536;
 
@@ -338,12 +363,14 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
     return main_header.status();
   }
 
-  std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>
-      blocks;
-  std::unordered_map<std::pair<uint64_t, uint64_t>, int,
-                     absl::Hash<std::pair<uint64_t, uint64_t>>>
+  std::vector<BasicBlockWithThroughputProto> block_protos;
+  // Maps the AddressRange of all seen blocks to their indices in `blocks`.
+  std::unordered_map<AddressRange, std::vector<int>, absl::Hash<AddressRange>>
       index_map;
+  // Maps valid indices in `blocks` to the address ranges of that block's
+  // preceding (resp. following) contexts.
+  std::vector<std::vector<AddressRange>> idx_to_preceding_contexts;
+  std::vector<std::vector<AddressRange>> idx_to_following_contexts;
   for (const auto &event : perf_data->events()) {
     if (!event.has_sample_event() ||
         !event.sample_event().branch_stack_size()) {
@@ -356,7 +383,15 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
       continue;
     }
 
+    // Extract blocks and their latencies from last branch records.
     const auto &branch_stack = event.sample_event().branch_stack();
+    struct {
+      bool is_valid = false;
+      AddressRange address_range;
+      uint32_t latency;
+      std::vector<AddressRange> preceding_contexts;
+      std::vector<AddressRange> following_contexts;
+    } branch_stack_blocks[branch_stack.size() - 1];
     for (int branch_idx = branch_stack.size() - 2; branch_idx >= 0;
          --branch_idx) {
       const auto &branch_entry = branch_stack[branch_idx + 1];
@@ -364,47 +399,166 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
 
       const uint64_t block_begin = branch_entry.to_ip();
       const uint64_t block_end = next_branch_entry.from_ip();
-
       // Simple validity checks: the block must start before it ends and cannot
       // be larger than some threshold.
-      if (block_begin >= block_end) {
-        continue;
-      }
-      if (block_end - block_begin > kMaxBlockSizeBytes) {
-        continue;
-      }
-
+      if (block_begin >= block_end) continue;
+      if (block_end - block_begin > kMaxBlockSizeBytes) continue;
       // Remove blocks not belonging to the binary we are importing from.
       if (block_begin < mmap_begin_addr || mmap_end_addr < block_end) {
         continue;
       }
 
-      uint32_t block_latency = next_branch_entry.cycles();
+      branch_stack_blocks[branch_idx] = {
+          .is_valid = true,
+          .address_range = {block_begin, block_end},
+          .latency = next_branch_entry.cycles(),
+      };
+    }
 
-      std::pair<uint64_t, uint64_t> block_range = {block_begin, block_end};
-      if (index_map.count(block_range)) {
-        blocks[index_map[block_range]].second.push_back(block_latency);
-      } else {
-        index_map[block_range] = blocks.size();
-        const auto block =
-            GetELFSlice(elf_object, block_begin, block_end, mapping->pgoff());
-        if (!block.ok()) {
-          // TODO(vbshah): Make the importer so something better than simply
-          // exiting upon encountering something unexpected.
-          return block.status();
-        }
-        blocks.emplace_back(*block, std::vector<uint32_t>{block_latency});
+    // Resolve what blocks are context to each block in the branch stack.
+    for (int block_idx = 0; block_idx < branch_stack.size() - 1; ++block_idx) {
+      auto &block = branch_stack_blocks[block_idx];
+      if (!block.is_valid) continue;
+
+      // Find valid context sequences.
+      for (int context_offset = std::min(preceding_context_size,
+                                         branch_stack.size() - block_idx - 2);
+           context_offset > 0; --context_offset) {
+        if (!branch_stack_blocks[block_idx + context_offset].is_valid) break;
+        block.preceding_contexts.push_back(
+            branch_stack_blocks[block_idx + context_offset].address_range);
       }
+      for (int context_offset = 1;
+           context_offset <= std::min(following_context_size, block_idx);
+           ++context_offset) {
+        if (!branch_stack_blocks[block_idx - context_offset].is_valid) break;
+        block.following_contexts.push_back(
+            branch_stack_blocks[block_idx - context_offset].address_range);
+      }
+
+      // Check if this block is a duplicate, i.e. whether this block with the
+      // same contexts has already been seen.
+      bool is_duplicate = false;
+      int duplicate_idx = -1;
+      for (int block_idx_to_check : index_map[block.address_range]) {
+        const auto &preceding_contexts_to_check =
+            idx_to_preceding_contexts[block_idx_to_check];
+        if (preceding_contexts_to_check.size() !=
+            block.preceding_contexts.size()) {
+          continue;
+        }
+        const auto &following_contexts_to_check =
+            idx_to_following_contexts[block_idx_to_check];
+        if (following_contexts_to_check.size() !=
+            block.following_contexts.size()) {
+          continue;
+        }
+        bool is_match = true;
+        for (int i = 0; i < block.preceding_contexts.size(); ++i) {
+          if (preceding_contexts_to_check[i] != block.preceding_contexts[i]) {
+            is_match = false;
+            break;
+          }
+        }
+        for (int i = 0; i < block.following_contexts.size(); ++i) {
+          if (following_contexts_to_check[i] != block.following_contexts[i]) {
+            is_match = false;
+            break;
+          }
+        }
+        if (is_match) {
+          is_duplicate = true;
+          duplicate_idx = block_idx_to_check;
+          break;
+        }
+      }
+      if (is_duplicate) {
+        block_protos[duplicate_idx]
+            .mutable_inverse_throughputs(0)
+            ->add_inverse_throughput_cycles(block.latency);
+        continue;
+      }
+
+      index_map[block.address_range].push_back(block_protos.size());
+      idx_to_preceding_contexts.push_back(std::move(block.preceding_contexts));
+      idx_to_following_contexts.push_back(std::move(block.following_contexts));
+
+      const auto [block_begin, block_end] = block.address_range;
+      absl::StatusOr<std::vector<DisassembledInstruction>> instrs =
+          GetInstructionsInAddressRange(elf_object, block.address_range,
+                                        mapping->pgoff());
+      if (!instrs.ok()) {
+        // TODO(vbshah): Make the importer so something better than simply
+        // exiting upon encountering something unexpected.
+        return instrs.status();
+      }
+      const absl::StatusOr<DisassembledInstruction> tail_instr =
+          GetInstructionAtAddress(elf_object, block_end, mapping->pgoff());
+      if (!tail_instr.ok()) {
+        return tail_instr.status();
+      }
+      instrs->push_back(*tail_instr);
+
+      // TODO(vbshah): Re-use existing block if possible i.e. if the same
+      // address range has already been seen.
+      BasicBlockWithThroughputProto block_with_throughput;
+      *block_with_throughput.mutable_basic_block() =
+          importer_.BasicBlockProtoFromInstructions(*instrs);
+      ThroughputWithSourceProto &throughput =
+          *block_with_throughput.add_inverse_throughputs();
+      throughput.set_source(source_name);
+      throughput.add_inverse_throughput_cycles(block.latency);
+      block_protos.push_back(block_with_throughput);
     }
   }
 
-  return blocks;
+  // Copy contexts into the actual block protos.
+  // TODO(vbshah): Consider dropping the added tail branch instruction from
+  // blocks with no following context.
+  for (int block_idx = 0; block_idx < block_protos.size(); ++block_idx) {
+    BasicBlockProto &block_proto =
+        *block_protos[block_idx].mutable_basic_block();
+
+    for (auto context_block_address_range :
+         idx_to_preceding_contexts[block_idx]) {
+      std::vector<int> &context_block_idxs =
+          index_map[context_block_address_range];
+      assert(!context_block_idxs.empty());
+
+      const BasicBlockProto &context_block_proto =
+          block_protos[context_block_idxs[0]].basic_block();
+      block_proto.mutable_machine_preceding_context()->Add(
+          std::cbegin(context_block_proto.machine_instructions()),
+          std::cend(context_block_proto.machine_instructions()));
+      block_proto.mutable_canonicalized_preceding_context()->Add(
+          std::cbegin(context_block_proto.canonicalized_instructions()),
+          std::cend(context_block_proto.canonicalized_instructions()));
+    }
+    for (auto context_block_address_range :
+         idx_to_following_contexts[block_idx]) {
+      std::vector<int> &context_block_idxs =
+          index_map[context_block_address_range];
+      assert(!context_block_idxs.empty());
+
+      const BasicBlockProto &context_block_proto =
+          block_protos[context_block_idxs[0]].basic_block();
+      block_proto.mutable_machine_following_context()->Add(
+          std::cbegin(context_block_proto.machine_instructions()),
+          std::cend(context_block_proto.machine_instructions()));
+      block_proto.mutable_canonicalized_following_context()->Add(
+          std::cbegin(context_block_proto.canonicalized_instructions()),
+          std::cend(context_block_proto.canonicalized_instructions()));
+    }
+  }
+
+  return block_protos;
 }
 
 absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
 AnnotatingImporter::GetAnnotatedBasicBlockProtos(
     std::string_view elf_file_name, std::string_view perf_data_file_name,
-    std::string_view source_name) {
+    std::string_view source_name, int preceding_context_size,
+    int following_context_size) {
   // Try to load the binary and cast it down to an ELF object.
   absl::StatusOr<llvm::object::OwningBinary<llvm::object::Binary>>
       owning_binary = LoadBinary(elf_file_name);
@@ -429,10 +583,10 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   }
 
   // Get the raw basic blocks, perf samples, and LBR data for annotation.
-  absl::StatusOr<std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
-      basic_blocks =
-          GetLBRBlocksWithLatency(*elf_object, *perf_data, *main_mapping);
+  absl::StatusOr<std::vector<BasicBlockWithThroughputProto>> basic_blocks =
+      GetLBRBlocksWithLatency(*elf_object, *perf_data, *main_mapping,
+                              source_name, preceding_context_size,
+                              following_context_size);
   if (!basic_blocks.ok()) {
     return basic_blocks.status();
   }
@@ -442,32 +596,22 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   }
   const auto &[sample_types, samples] = sample_types_and_samples.value();
 
-  // Convert the raw basic blocks into protos and annotate them using samples.
-  std::vector<BasicBlockWithThroughputProto> basic_block_protos(
-      basic_blocks->size());
-  for (int block_idx = 0; block_idx < basic_blocks->size(); ++block_idx) {
-    const auto &[instructions, latency] = (*basic_blocks)[block_idx];
-
-    // Create the un-annotated basic block proto.
-    BasicBlockWithThroughputProto &basic_block_proto =
-        basic_block_protos[block_idx];
-    *basic_block_proto.mutable_basic_block() =
-        importer_.BasicBlockProtoFromInstructions(instructions);
+  // Annotate the blocks using samples.
+  // TODO(vbshah): Consider annotating contexts as well.
+  for (BasicBlockWithThroughputProto &block_with_throughput : *basic_blocks) {
+    BasicBlockProto &block = *block_with_throughput.mutable_basic_block();
 
     // Loop over and annotate individual instructions.
-    for (int instruction_idx = 0; instruction_idx < instructions.size();
+    for (int instruction_idx = 0;
+         instruction_idx < block.machine_instructions_size();
          ++instruction_idx) {
-      uint64_t instruction_addr = basic_block_proto.basic_block()
-                                      .machine_instructions()[instruction_idx]
-                                      .address();
-      if (!samples.count(instruction_addr)) {
-        continue;
-      }
+      uint64_t instruction_addr =
+          block.machine_instructions()[instruction_idx].address();
+      if (!samples.count(instruction_addr)) continue;
 
       const std::vector<int> &annotations = samples.at(instruction_addr);
-      auto &instruction_proto = basic_block_proto.mutable_basic_block()
-                                    ->mutable_canonicalized_instructions()
-                                    ->at(instruction_idx);
+      auto &instruction_proto =
+          block.mutable_canonicalized_instructions()->at(instruction_idx);
       for (int annotation_idx = 0; annotation_idx < annotations.size();
            ++annotation_idx) {
         if (annotations[annotation_idx]) {
@@ -478,15 +622,9 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
         }
       }
     }
-
-    ThroughputWithSourceProto &throughput =
-        *basic_block_protos[block_idx].add_inverse_throughputs();
-    throughput.set_source(source_name);
-    throughput.add_inverse_throughput_cycles(
-        std::accumulate(latency.begin(), latency.end(), 0.0) / latency.size());
   }
 
-  return basic_block_protos;
+  return basic_blocks;
 }
 
 }  // namespace gematria
