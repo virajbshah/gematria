@@ -863,6 +863,12 @@ class ModelBase(metaclass=abc.ABCMeta):
         == options.LearningRateScheduleType.POLYNOMIAL
     ):
       self._decayed_learning_rate = tf.train.polynomial_decay(**decay_args)
+    elif (
+        self._learning_rate_schedule
+        == options.LearningRateScheduleType.COSINE_RESTARTS
+    ):
+      decay_args['first_decay_steps'] = decay_args.pop('decay_steps')
+      self._decayed_learning_rate = tf.train.cosine_decay_restarts(**decay_args)
     else:
       assert (
           self._learning_rate_schedule == options.LearningRateScheduleType.NONE
