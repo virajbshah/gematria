@@ -206,6 +206,15 @@ TASK_READOUT_INPUT_LAYER_NORMALIZATION = flags.DEFINE_bool(
     ),
 )
 
+USE_CONTEXT = flags.DEFINE_bool(
+    'gematria_use_context',
+    True,
+    (
+        'Includes instructions belonging to the preceding and following'
+        ' contexts in the graph representations if present within the data.'
+    ),
+)
+
 _MUST_BE_POSITIVE_WITH_RNN = (
     'RNN size must be positive when RNN type is not NONE.'
 )

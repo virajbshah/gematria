@@ -56,6 +56,7 @@ def main(argv):
       address_token=tokens.ADDRESS,
       memory_token=tokens.MEMORY,
       annotation_names=model_annotation_names,
+      use_context=granite_flags.USE_CONTEXT.value,
       dtype=tf.dtypes.float32,
       node_embedding_size=granite_flags.NODE_EMBEDDING_SIZE.value,
       edge_embedding_size=granite_flags.EDGE_EMBEDDING_SIZE.value,

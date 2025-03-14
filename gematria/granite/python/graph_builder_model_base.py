@@ -117,6 +117,7 @@ class GraphBuilderModelBase(
       address_token: str,
       memory_token: str,
       annotation_names: Sequence[str] = [],
+      use_context: bool = True,
       **kwargs: Any,
   ) -> None:
     """Initializes the model with the given feature factory.
@@ -173,6 +174,8 @@ class GraphBuilderModelBase(
         self._batch_graph_builder.annotation_names
     )
     self._num_annotations = len(self._annotation_names_list)
+
+    self._use_context = use_context
 
   @property
   def special_tokens_tensor(self) -> tf.Tensor:
@@ -331,7 +334,7 @@ class GraphBuilderModelBase(
   def _add_basic_block_to_batch(self, block: basic_block.BasicBlock) -> None:
     # Add context to the basic block graph only for seq2seq models.
     basic_block_was_added = self._batch_graph_builder.add_basic_block(
-        block, add_context=self.use_deltas
+        block, add_context=self._use_context and self.use_deltas
     )
     if not basic_block_was_added:
       # TODO(ondrasej): Better handling of blocks that can't be added to the
