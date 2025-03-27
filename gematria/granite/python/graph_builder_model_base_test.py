@@ -141,7 +141,7 @@ class GraphBuilderModelBaseTest(parameterized.TestCase, model_test.TestCase):
     schedule = model.schedule_batch(self.blocks_with_throughput)
     self.assertEqual(
         schedule[model._graphs_tuple_placeholders.globals].shape,
-        (3, len(self.tokens)),
+        (3, len(self.tokens) * 3),
     )
     self.assertEqual(
         schedule[model._graphs_tuple_placeholders.nodes].shape, (26,)
@@ -178,7 +178,7 @@ class GraphBuilderModelBaseTest(parameterized.TestCase, model_test.TestCase):
 
       special_tokens = sess.run(model.special_tokens_tensor)
       self.assertEqual(special_tokens.shape, (5,))
-      self.assertAllLess(special_tokens, len(self.tokens))
+      self.assertAllLess(special_tokens, len(self.tokens) * 3)
       self.assertAllGreaterEqual(special_tokens, -1)
 
   @parameterized.named_parameters(
@@ -340,6 +340,9 @@ class GraphBuilderModelBaseTest(parameterized.TestCase, model_test.TestCase):
     )
     model.initialize()
 
+    print('tokens:', self.tokens)
+    print('blocks:', self.blocks_with_throughput)
+
     num_trials = 100
 
     for _ in range(num_trials):
@@ -347,6 +350,7 @@ class GraphBuilderModelBaseTest(parameterized.TestCase, model_test.TestCase):
       # not contain unknown tokens, we expect that the out-of-vocabulary
       # replacement token is never used.
       schedule = model.schedule_batch(self.blocks_with_throughput)
+      print('nodes :', schedule[model._graphs_tuple_placeholders.nodes])
       oov_token_mask = (
           schedule[model._graphs_tuple_placeholders.nodes] == model._oov_token
       )

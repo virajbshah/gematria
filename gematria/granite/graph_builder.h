@@ -90,6 +90,7 @@
 #define GEMATRIA_GRANITE_GRAPH_BUILDER_H_
 
 #include <cstddef>
+#include <functional>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -134,8 +135,46 @@ enum class EdgeType {
   kInstructionPrefix = 9,
 };
 
+// The types of blocks that nodes and edges created by the
+// BasicBlockGraphBuilder class belong to, based on whether the corresponding
+// node or edge belonged to a preceding or following context block or not.
+enum class BlockType {
+  kMainBlock = 0,
+  kPrecedingContext = 1,
+  kFollowingContext = 2,
+};
+
 std::ostream& operator<<(std::ostream& os, NodeType node_type);
 std::ostream& operator<<(std::ostream& os, EdgeType edge_type);
+std::ostream& operator<<(std::ostream& os, BlockType block_type);
+
+// A token paired with the corresponding block type indicating whether the
+// token belongs to the main block or the preceding or following contexts.
+struct TokenWithBlockType {
+  std::string token;
+  BlockType block_type;
+
+  bool operator==(const TokenWithBlockType& other) const {
+    return token == other.token && block_type == other.block_type;
+  }
+};
+
+}  // namespace gematria
+
+namespace std {
+
+template <>
+struct hash<gematria::TokenWithBlockType> {
+  size_t operator()(
+      const gematria::TokenWithBlockType& token_with_block_type) const {
+    return (hash<string>{}(token_with_block_type.token) << 1) ^
+           std::hash<int>{}(static_cast<int>(token_with_block_type.block_type));
+  }
+};
+
+}  // namespace std
+
+namespace gematria {
 
 // The basic block graph builder class. See the top-level comment for more
 // information on the format of the graphs produced by this file.
@@ -249,6 +288,10 @@ class BasicBlockGraphBuilder {
 
   // The types of the nodes in the batch.
   const std::vector<NodeType>& node_types() const { return node_types_; }
+  // The owning block types of the nodes in the batch.
+  const std::vector<BlockType>& node_block_types() const {
+    return node_block_types_;
+  }
   // Feature value of the nodes in the batch (i.e. the indices of the tokens
   // corresponding to the nodes). Corresponds to `GraphsTuple.nodes`.
   const std::vector<int>& node_features() const { return node_features_; }
@@ -385,25 +428,25 @@ class BasicBlockGraphBuilder {
 
   // Adds dependency of a node (instruction or an address computation node) on
   // a register. Adds the register node if it doesn't exist in the graph.
-  bool AddDependencyOnRegister(NodeIndex dependent_node,
-                               const std::string& register_name,
-                               EdgeType edge_type, bool is_context = false);
+  bool AddDependencyOnRegister(
+      NodeIndex dependent_node, const std::string& register_name,
+      EdgeType edge_type, BlockType block_type /* = BlockType::kMainBlock */);
 
   // Adds a new node to the batch; the feature of the node is given directly by
   // the caller.
   NodeIndex AddNode(NodeType node_type, TokenIndex token_index,
-                    bool is_context = false);
-  // Adds a new edge to the batch; the feature of the node is determined from
+                    BlockType block_type /* = BlockType::kMainBlock */);
+  // Adds a new node to the batch; the feature of the node is determined from
   // the token associated with the node. Returns kInvalidNode when the node was
   // not added.
   NodeIndex AddNode(NodeType node_type, const std::string& token,
-                    bool is_context = false);
+                    BlockType block_type /* = BlockType::kMainBlock */);
   // Adds a new edge to the batch.
   void AddEdge(EdgeType edge_type, NodeIndex sender, NodeIndex receiver);
 
   // Mapping from string node tokens to indices of embedding vectors used in
   // the models.
-  const std::unordered_map<std::string, TokenIndex> node_tokens_;
+  const std::unordered_map<TokenWithBlockType, TokenIndex> node_tokens_;
   // Tokens corresponding to nodes in the batch that are not associated directly
   // with a token of the assembly language.
   const TokenIndex immediate_token_;
@@ -423,6 +466,7 @@ class BasicBlockGraphBuilder {
   std::vector<int> num_edges_per_block_;
 
   std::vector<NodeType> node_types_;
+  std::vector<BlockType> node_block_types_;
   std::vector<TokenIndex> node_features_;
   std::vector<bool> context_node_mask_;
 

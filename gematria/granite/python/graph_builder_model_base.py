@@ -151,7 +151,7 @@ class GraphBuilderModelBase(
         node_feature_dtype=tf.dtypes.int32,
         edge_feature_shape=(),
         edge_feature_dtype=tf.dtypes.int32,
-        global_feature_shape=(len(tokens),),
+        global_feature_shape=(len(tokens) * 3,),
         global_feature_dtype=tf.dtypes.int32,
         graph_index_dtype=tf.dtypes.int32,
         tokens=tokens,

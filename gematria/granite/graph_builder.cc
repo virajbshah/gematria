@@ -37,25 +37,35 @@ constexpr BasicBlockGraphBuilder::NodeIndex kInvalidNode(-1);
 constexpr BasicBlockGraphBuilder::TokenIndex kInvalidTokenIndex(-1);
 constexpr uint64_t kUnknownAddress(0);
 
-std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> MakeIndex(
-    std::vector<std::string> items) {
-  std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> result;
+std::unordered_map<TokenWithBlockType, BasicBlockGraphBuilder::TokenIndex>
+MakeIndex(std::vector<std::string> items) {
+  std::unordered_map<TokenWithBlockType, BasicBlockGraphBuilder::TokenIndex>
+      result;
   for (BasicBlockGraphBuilder::TokenIndex i = 0; i < items.size(); ++i) {
-    const auto insertion_result = result.emplace(std::move(items[i]), i);
+    // Each token has three variants, one for each block type, given indices
+    // `base_index`, `base_index + 1`, and `base_index + 2` respectively.
+    int base_index = 3 * i;
+    const auto insertion_result = result.emplace(
+        TokenWithBlockType{items[i], BlockType::kMainBlock}, base_index);
     if (!insertion_result.second) {
       // TODO(ondrasej): Make this return a status.
-      std::cerr << "Duplicate item: '" << insertion_result.first->first << "'";
+      std::cerr << "Duplicate item: '" << items[i] << "'";
       std::abort();
     }
+    result.emplace(TokenWithBlockType{items[i], BlockType::kPrecedingContext},
+                   base_index + 1);
+    result.emplace(
+        TokenWithBlockType{std::move(items[i]), BlockType::kFollowingContext},
+        base_index + 2);
   }
   return result;
 }
 
 BasicBlockGraphBuilder::TokenIndex FindTokenOrDie(
-    const std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex>&
-        tokens,
+    const std::unordered_map<TokenWithBlockType,
+                             BasicBlockGraphBuilder::TokenIndex>& tokens,
     const std::string& token) {
-  return tokens.at(token);
+  return tokens.at(TokenWithBlockType{token, BlockType::kMainBlock});
 }
 
 template <typename MapType, typename KeyType, typename DefaultType>
@@ -97,6 +107,15 @@ std::ostream& operator<<(std::ostream& os, EdgeType edge_type) {
     EXEGESIS_ENUM_CASE(os, EdgeType::kReverseStructuralDependency);
     EXEGESIS_ENUM_CASE(os, EdgeType::kTakenBranch);
     EXEGESIS_ENUM_CASE(os, EdgeType::kInstructionPrefix);
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, BlockType block_type) {
+  switch (block_type) {
+    EXEGESIS_ENUM_CASE(os, BlockType::kMainBlock);
+    EXEGESIS_ENUM_CASE(os, BlockType::kPrecedingContext);
+    EXEGESIS_ENUM_CASE(os, BlockType::kFollowingContext);
   }
   return os;
 }
@@ -212,15 +231,15 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
   uint64_t expected_instruction_address = kUnknownAddress;
   const struct {
     const std::vector<Instruction>& instruction_group;
-    bool is_context;
-  } instruction_groups[] = {{preceding_context, true},
-                            {instructions, false},
-                            {following_context, true}};
-  for (const auto [instruction_group, is_context] : instruction_groups) {
+    BlockType block_type;
+  } instruction_groups[] = {{preceding_context, BlockType::kPrecedingContext},
+                            {instructions, BlockType::kMainBlock},
+                            {following_context, BlockType::kFollowingContext}};
+  for (const auto [instruction_group, block_type] : instruction_groups) {
     for (const Instruction& instruction : instruction_group) {
       // Add the instruction node.
       const NodeIndex instruction_node =
-          AddNode(NodeType::kInstruction, instruction.mnemonic, is_context);
+          AddNode(NodeType::kInstruction, instruction.mnemonic, block_type);
       if (instruction_node == kInvalidNode) {
         return false;
       }
@@ -236,8 +255,10 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
       instruction_annotations_.push_back(row);
 
       // Add nodes for prefixes of the instruction.
+      // TODO(vbshah): Do we need to consider the block type here?
       for (const std::string& prefix : instruction.prefixes) {
-        const NodeIndex prefix_node = AddNode(NodeType::kPrefix, prefix);
+        const NodeIndex prefix_node =
+            AddNode(NodeType::kPrefix, prefix, block_type);
         if (prefix_node == kInvalidNode) {
           return false;
         }
@@ -317,6 +338,7 @@ void BasicBlockGraphBuilder::Reset() {
   num_edges_per_block_.clear();
 
   node_types_.clear();
+  node_block_types_.clear();
   node_features_.clear();
   context_node_mask_.clear();
 
@@ -334,52 +356,61 @@ bool BasicBlockGraphBuilder::AddInputOperand(
   assert(instruction_node >= 0);
   assert(instruction_node < num_nodes());
 
-  bool is_context = context_node_mask_[instruction_node];
+  BlockType block_type = node_block_types_[instruction_node];
+  // The indices for the three variants of a token based on block type are
+  // contiguous and in the same order as in the `BlockType` enum class, so we
+  // use `block_type_offset` as an offset off of the `kMainBlock` variant for
+  // special node types.
+  int block_type_offset = static_cast<int>(block_type);
   switch (operand.type()) {
     case OperandType::kRegister: {
       if (!AddDependencyOnRegister(instruction_node, operand.register_name(),
-                                   EdgeType::kInputOperands, is_context)) {
+                                   EdgeType::kInputOperands, block_type)) {
         return false;
       }
     } break;
     case OperandType::kImmediateValue: {
       AddEdge(EdgeType::kInputOperands,
-              AddNode(NodeType::kImmediate, immediate_token_, is_context),
+              AddNode(NodeType::kImmediate,
+                      immediate_token_ + block_type_offset, block_type),
               instruction_node);
     } break;
     case OperandType::kFpImmediateValue: {
       AddEdge(EdgeType::kInputOperands,
-              AddNode(NodeType::kFpImmediate, fp_immediate_token_, is_context),
+              AddNode(NodeType::kFpImmediate,
+                      fp_immediate_token_ + block_type_offset, block_type),
               instruction_node);
     } break;
     case OperandType::kAddress: {
       const NodeIndex address_node =
-          AddNode(NodeType::kAddressOperand, address_token_, is_context);
+          AddNode(NodeType::kAddressOperand, address_token_ + block_type_offset,
+                  block_type);
       const AddressTuple& address_tuple = operand.address();
       if (!address_tuple.base_register.empty()) {
         if (!AddDependencyOnRegister(address_node, address_tuple.base_register,
                                      EdgeType::kAddressBaseRegister,
-                                     is_context)) {
+                                     block_type)) {
           return false;
         }
       }
       if (!address_tuple.index_register.empty()) {
         if (!AddDependencyOnRegister(address_node, address_tuple.index_register,
                                      EdgeType::kAddressIndexRegister,
-                                     is_context)) {
+                                     block_type)) {
           return false;
         }
       }
       if (!address_tuple.segment_register.empty()) {
         if (!AddDependencyOnRegister(
                 address_node, address_tuple.segment_register,
-                EdgeType::kAddressSegmentRegister, is_context)) {
+                EdgeType::kAddressSegmentRegister, block_type)) {
           return false;
         }
       }
       if (address_tuple.displacement != 0) {
         AddEdge(EdgeType::kAddressDisplacement,
-                AddNode(NodeType::kImmediate, immediate_token_, is_context),
+                AddNode(NodeType::kImmediate,
+                        immediate_token_ + block_type_offset, block_type),
                 address_node);
       }
       // NOTE(ondrasej): For now, we explicitly ignore the scaling.
@@ -390,8 +421,10 @@ bool BasicBlockGraphBuilder::AddInputOperand(
           alias_group_nodes_, operand.alias_group_id(), kInvalidNode);
       if (alias_group_node == kInvalidNode) {
         alias_group_node =
-            AddNode(NodeType::kMemoryOperand, memory_token_, is_context);
-      } else if (context_node_mask_[alias_group_node] && !is_context) {
+            AddNode(NodeType::kMemoryOperand, memory_token_ + block_type_offset,
+                    block_type);
+      } else if (context_node_mask_[alias_group_node] &&
+                 block_type == BlockType::kMainBlock) {
         // Update `context_node_mask_` to indicate that `alias_group_node`,
         // previously marked as context, is also part of the main block i.e. not
         // context.
@@ -412,11 +445,16 @@ bool BasicBlockGraphBuilder::AddOutputOperand(
   assert(instruction_node >= 0);
   assert(instruction_node < num_nodes());
 
-  bool is_context = context_node_mask_[instruction_node];
+  BlockType block_type = node_block_types_[instruction_node];
+  // The indices for the three variants of a token based on block type are
+  // contiguous and in the same order as in the `BlockType` enum class, so we
+  // use `block_type_offset` as an offset off of the `kMainBlock` variant for
+  // special node types.
+  int block_type_offset = static_cast<int>(block_type);
   switch (operand.type()) {
     case OperandType::kRegister: {
       const NodeIndex register_node =
-          AddNode(NodeType::kRegister, operand.register_name(), is_context);
+          AddNode(NodeType::kRegister, operand.register_name(), block_type);
       if (register_node == kInvalidNode) return false;
       AddEdge(EdgeType::kOutputOperands, instruction_node, register_node);
       register_nodes_[operand.register_name()] = register_node;
@@ -430,7 +468,8 @@ bool BasicBlockGraphBuilder::AddOutputOperand(
       break;
     case OperandType::kMemory: {
       const NodeIndex alias_group_node =
-          AddNode(NodeType::kMemoryOperand, memory_token_, is_context);
+          AddNode(NodeType::kMemoryOperand, memory_token_ + block_type_offset,
+                  block_type);
       alias_group_nodes_[operand.alias_group_id()] = alias_group_node;
       AddEdge(EdgeType::kOutputOperands, instruction_node, alias_group_node);
     } break;
@@ -444,16 +483,20 @@ bool BasicBlockGraphBuilder::AddOutputOperand(
 
 bool BasicBlockGraphBuilder::AddDependencyOnRegister(
     NodeIndex dependent_node, const std::string& register_name,
-    EdgeType edge_type, bool is_context) {
+    EdgeType edge_type, BlockType block_type) {
   NodeIndex& operand_node =
       LookupOrInsert(register_nodes_, register_name, kInvalidNode);
   if (operand_node == kInvalidNode) {
     // Add a node for the register if it doesn't exist. This also updates the
     // node index in `node_by_register`.
-    operand_node = AddNode(NodeType::kRegister, register_name, is_context);
-  } else if (context_node_mask_[operand_node] && !is_context) {
+    operand_node = AddNode(NodeType::kRegister, register_name, block_type);
+  } else if (node_block_types_[operand_node] != BlockType::kMainBlock &&
+             block_type == BlockType::kMainBlock) {
     // Update `context_node_mask_` to indicate that `operand_node`, previously
     // marked as context, is also part of the main block i.e. not context.
+    node_block_types_[operand_node] = BlockType::kMainBlock;
+    node_features_[operand_node] = node_tokens_.at(
+        TokenWithBlockType{register_name, BlockType::kMainBlock});
     context_node_mask_[operand_node] = false;
   }
   if (operand_node == kInvalidNode) return false;
@@ -462,17 +505,18 @@ bool BasicBlockGraphBuilder::AddDependencyOnRegister(
 }
 
 BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddNode(
-    NodeType node_type, TokenIndex token_index, bool is_context) {
+    NodeType node_type, TokenIndex token_index, BlockType block_type) {
   const NodeIndex new_node_index = num_nodes();
   node_types_.push_back(node_type);
+  node_block_types_.push_back(block_type);
   node_features_.push_back(token_index);
-  context_node_mask_.push_back(is_context);
+  context_node_mask_.push_back(block_type != BlockType::kMainBlock);
   return new_node_index;
 }
 
 BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddNode(
-    NodeType node_type, const std::string& token, bool is_context) {
-  const auto it = node_tokens_.find(token);
+    NodeType node_type, const std::string& token, BlockType block_type) {
+  const auto it = node_tokens_.find(TokenWithBlockType{token, block_type});
   TokenIndex token_index = kInvalidTokenIndex;
   if (it != node_tokens_.end()) {
     token_index = it->second;
@@ -486,7 +530,7 @@ BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddNode(
         token_index = replacement_token_;
     }
   }
-  return AddNode(node_type, token_index, is_context);
+  return AddNode(node_type, token_index, block_type);
 }
 
 void BasicBlockGraphBuilder::AddEdge(EdgeType edge_type, NodeIndex sender,
@@ -565,6 +609,7 @@ std::string BasicBlockGraphBuilder::DebugString() const {
   StrAppendList(buffer, "num_nodes_per_block", num_nodes_per_block());
   StrAppendList(buffer, "num_edges_per_block", num_edges_per_block());
   StrAppendList(buffer, "node_types", node_types());
+  StrAppendList(buffer, "node_block_types", node_block_types());
   StrAppendList(buffer, "context_node_mask", context_node_mask());
   StrAppendList(buffer, "edge_senders", edge_senders());
   StrAppendList(buffer, "edge_receivers", edge_receivers());

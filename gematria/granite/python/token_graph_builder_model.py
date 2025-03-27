@@ -307,7 +307,7 @@ class TokenGraphBuilderModel(graph_builder_model_base.GraphBuilderModelBase):
                 ),
                 node_model_fn=functools.partial(
                     TokenGraphBuilderModelNodeEmbed,
-                    vocab_size=len(self._token_list),
+                    vocab_size=len(self._token_list) * 3,
                     common_embed_dim=self._common_node_embedding_size,
                     num_annotations=self._num_annotations,
                     instruction_annotations=self._instruction_annotations,

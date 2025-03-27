@@ -101,7 +101,7 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstruction) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 5);
   EXPECT_EQ(builder_->num_edges(), 4);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(5));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(4));
 
@@ -142,7 +142,7 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithPrefix) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 6);
   EXPECT_EQ(builder_->num_edges(), 5);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(6));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(5));
 
@@ -183,7 +183,7 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithAnnotation) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 3);
   EXPECT_EQ(builder_->num_edges(), 2);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(3));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(2));
 
@@ -225,7 +225,7 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidMnemonic_ReturnError) {
   EXPECT_EQ(builder_->num_graphs(), 0);
   EXPECT_EQ(builder_->num_nodes(), 0);
   EXPECT_EQ(builder_->num_edges(), 0);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre());
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre());
 }
@@ -291,7 +291,7 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidMnemonic_ReplaceToken) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 5);
   EXPECT_EQ(builder_->num_edges(), 4);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(5));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(4));
 
@@ -333,7 +333,7 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidRegister_ReplaceToken) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 5);
   EXPECT_EQ(builder_->num_edges(), 4);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(5));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(4));
 
@@ -379,7 +379,7 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidAddress_ReplaceToken) {
   EXPECT_EQ(builder_->num_graphs(), 1);
   EXPECT_EQ(builder_->num_nodes(), 5);
   EXPECT_EQ(builder_->num_edges(), 4);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(5));
   EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(4));
 
@@ -459,7 +459,7 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleInstructions) {
                                     2 +  // Fourth instruction.
                                     3;   // Structural dependencies.
   EXPECT_EQ(builder_->num_graphs(), 1);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
   EXPECT_EQ(builder_->num_nodes(), kExpectedNumNodes);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(kExpectedNumNodes));
   EXPECT_EQ(builder_->num_edges(), kExpectedNumEdges);
@@ -537,7 +537,7 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlocks) {
     })pb"))));
 
   EXPECT_EQ(builder_->num_graphs(), 2);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
 
   EXPECT_EQ(builder_->num_nodes(), 3 + 3);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(3, 3));
@@ -619,7 +619,7 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlocksWithContext) {
                               true));
 
   EXPECT_EQ(builder_->num_graphs(), 2);
-  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens) * 3);
 
   EXPECT_EQ(builder_->num_nodes(), 7 + 5);
   EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(7, 5));

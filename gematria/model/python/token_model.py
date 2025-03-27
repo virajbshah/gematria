@@ -135,6 +135,8 @@ class TokenModel(model_base.ModelBase):
       self._oov_token = self._tokens.get(replacement_token)
       if self._oov_token is None:
         raise ValueError(f'Token {replacement_token} was not found in tokens.')
+      else:
+        self._oov_token *= 3
 
     super().__init__(**kwargs)
 

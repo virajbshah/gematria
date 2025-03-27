@@ -48,7 +48,7 @@ class BasicBlockGraphBuilderTest(
     super().setUp()
 
   def assertBuilderIsSelfConsistent(self, builder, num_blocks):
-    self.assertLen(self.tokens, builder.num_node_tokens)
+    self.assertLen(self.tokens, builder.num_node_tokens // 3)
 
     edge_senders = builder.edge_senders
     edge_receivers = builder.edge_receivers
