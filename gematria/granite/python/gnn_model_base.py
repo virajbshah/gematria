@@ -415,6 +415,11 @@ class GnnModelBase(model_base.ModelBase):
               n_node=graphs_tuple.n_node,
               n_edge=graphs_tuple.n_edge,
           )
+
+      # Log histograms for all trainable variables.
+      for var in layer.module.trainable_variables:
+        tf.summary.histogram(var.name, var)
+
     return graphs_tuple
 
   def _create_readout_network_resources(self) -> None:
