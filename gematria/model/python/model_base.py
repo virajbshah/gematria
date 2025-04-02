@@ -1479,7 +1479,6 @@ class ModelBase(metaclass=abc.ABCMeta):
       max_instructions_in_batch: Optional[int],
       randomize_batches: bool = True,
       randomize_expected_outputs: bool = False,
-      run_under_tf_profiler: bool = False,
   ) -> Optional[training.TrainingEpochStats]:
     """Runs training of the model on the given training data.
 
@@ -1502,8 +1501,6 @@ class ModelBase(metaclass=abc.ABCMeta):
       randomize_expected_outputs: Set to True to randomly select the expected
         outputs used for training from the available values. When False, it
         takes the first value from the list.
-      run_under_tf_profiler: Set to True when the model is being trained under
-        the TensorFlow profiler.
 
     Returns:
       The loss before the last training step. Returns None when no training was
@@ -1549,7 +1546,7 @@ class ModelBase(metaclass=abc.ABCMeta):
       while not monitored_session.should_stop():
         with profiler.experimental.Trace(
             'train', step_num=self.global_step, _r=1
-        ) if run_under_tf_profiler else nullcontext():
+        ):
           stats = run_one_epoch()
           logging.info('Training: %s', stats)
       return stats
