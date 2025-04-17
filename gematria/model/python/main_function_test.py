@@ -16,7 +16,7 @@ import copy
 import functools
 from os import path
 import re
-from threading import Thread
+import threading
 from unittest import mock
 
 from absl import flags
@@ -878,7 +878,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     FLAGS.gematria_training_throughput_selection = training_throughput_selection
 
     # Set up a thread for the training process running the profiling server.
-    server_thread = Thread(
+    server_thread = threading.Thread(
         target=main_function.run_gematria_model_from_command_line_flags,
         args=(MockModel,),
         kwargs={'dtype': tf.dtypes.float32},
