@@ -127,6 +127,8 @@ jobs:
         sudo rm -f /usr/bin/clang++ && \
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang && \
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang++
+    - name: Setup permissions
+      run: sudo chmod a+w /mnt
     - name: Cache Bazel
       uses: actions/cache@v3
       with:
