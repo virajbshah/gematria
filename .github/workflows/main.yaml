@@ -128,7 +128,7 @@ jobs:
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang && \
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang++
     - name: Setup bazel output base
-      run: sudo mkdir /mnt/output_base && sudo chmod a+x /mnt/output_base
+      run: sudo mkdir /mnt/output_base && sudo chmod a+rw /mnt/output_base
     - name: Cache Bazel
       uses: actions/cache@v3
       with:
