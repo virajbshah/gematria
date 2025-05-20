@@ -108,6 +108,12 @@ jobs:
         build-config: [fastbuild, opt]
     steps:
     - uses: actions/checkout@v4
+    - name: Symlink bazel output root
+      # The GitHub CI runners have a disk with free capacity mounted at `/mnt`.
+      # Linking the output root here should prevent failures from lack of space.
+      run: |
+        mkdir -p /mnt/.cache/bazel ~/.cache && \
+        ln -s /mnt/.cache/bazel ~/.cache/bazel
     - name: Setup environment variables
       run: echo "CURRENT_DAY=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
     - name: Setup LLVM
