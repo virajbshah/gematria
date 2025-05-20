@@ -127,8 +127,8 @@ jobs:
         sudo rm -f /usr/bin/clang++ && \
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang && \
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang++
-    - name: Setup bazel output root
-      run: sudo chmod a+w /mnt && mkdir -p /mnt/.cache/bazel
+    - name: Setup bazel output base
+      run: sudo mkdir /mnt/output_base && sudo chmod a+x /mnt/output_base
     - name: Cache Bazel
       uses: actions/cache@v3
       with:
@@ -146,8 +146,8 @@ jobs:
     - name: Install python deps
       run: pip3 install -r requirements.txt
     - name: Run build
-      run: env XDG_CACHE_HOME=/mnt/.cache bazel build -c ${{ matrix.build-config }} ...
+      run: bazel --output_base=/mnt/output_base build -c ${{ matrix.build-config }} ...
     - name: Run tests
-      run: env XDG_CACHE_HOME=/mnt/.cache bazel test -c ${{ matrix.build-config }} --define run_under_ci=1 --test_tag_filters="-perf_counters" --test_output=errors ...
+      run: bazel --output_base=/mnt/output_base test -c ${{ matrix.build-config }} --define run_under_ci=1 --test_tag_filters="-perf_counters" --test_output=errors ...
     - name: Check disk usage
       run: df -h
