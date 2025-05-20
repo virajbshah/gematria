@@ -110,13 +110,6 @@ jobs:
     - name: Check disk usage
       run: df -h
     - uses: actions/checkout@v4
-    - name: Symlink bazel output root
-      # The GitHub CI runners have a disk with free capacity mounted at `/mnt`.
-      # Linking the output root here should prevent failures from lack of space.
-      run: |
-        sudo chmod a+w /mnt && \
-        mkdir -p /mnt/.cache/bazel ~/.cache && \
-        ln -s /mnt/.cache/bazel ~/.cache/bazel
     - name: Setup environment variables
       run: echo "CURRENT_DAY=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
     - name: Setup LLVM
@@ -138,7 +131,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          ~/.cache/bazel
+          /mnt/.cache/bazel
         key: ${{ runner.os }}-bazel-${{ matrix.build-config }}-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}-${{ env.CURRENT_DAY }}
         restore-keys: |
           ${{ runner.os }}-bazel-${{ matrix.build-config }}-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}
