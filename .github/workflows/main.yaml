@@ -140,7 +140,7 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
     - name: Install python deps
-      run: pip3 install -r requirements.txt
+      run: pip3 install -r requirements_lock_3_11.txt
     - name: Run build
       run: bazel --output_base=/mnt/output_base build -c ${{ matrix.build-config }} ...
     - name: Run tests
