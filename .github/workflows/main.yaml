@@ -112,6 +112,7 @@ jobs:
       # The GitHub CI runners have a disk with free capacity mounted at `/mnt`.
       # Linking the output root here should prevent failures from lack of space.
       run: |
+        sudo chmod +w /mnt && \
         mkdir -p /mnt/.cache/bazel ~/.cache && \
         ln -s /mnt/.cache/bazel ~/.cache/bazel
     - name: Setup environment variables
