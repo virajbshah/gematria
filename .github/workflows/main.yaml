@@ -108,6 +108,20 @@ jobs:
         build-config: [fastbuild, opt]
     steps:
     - uses: actions/checkout@v4
+    - name: Free up disk space
+      # Removes unneeded packages and libraries to free up disk space.
+      run: |
+        sudo rm -rf /usr/local/lib/android || true
+        sudo rm -rf /usr/share/dotnet || true
+        sudo apt-get remove -y '^aspnetcore-.*' || true
+        sudo apt-get remove -y '^dotnet-.*' --fix-missing || true
+        sudo apt-get remove -y 'php.*' --fix-missing || true
+        sudo apt-get remove -y '^mongodb-.*' --fix-missing || true
+        sudo apt-get remove -y '^mysql-.*' --fix-missing || true
+        sudo apt-get remove -y azure-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri --fix-missing || true
+        sudo apt-get autoremove -y || true
+        sudo apt-get clean || true
+        sudo docker image prune --all --force || true
     - name: Setup environment variables
       run: echo "CURRENT_DAY=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
     - name: Setup LLVM
