@@ -107,6 +107,8 @@ jobs:
       matrix:
         build-config: [fastbuild, opt]
     steps:
+    - name: Check disk usage
+      run: df -h
     - uses: actions/checkout@v4
     - name: Symlink bazel output root
       # The GitHub CI runners have a disk with free capacity mounted at `/mnt`.
@@ -152,4 +154,5 @@ jobs:
       run: bazel build -c ${{ matrix.build-config }} ...
     - name: Run tests
       run: bazel test -c ${{ matrix.build-config }} --define run_under_ci=1 --test_tag_filters="-perf_counters" --test_output=errors ...
-
+    - name: Check disk usage
+      run: df -h
