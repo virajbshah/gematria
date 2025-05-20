@@ -133,7 +133,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          /mnt/.cache/bazel
+          /mnt/output_base
         key: ${{ runner.os }}-bazel-${{ matrix.build-config }}-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}-${{ env.CURRENT_DAY }}
         restore-keys: |
           ${{ runner.os }}-bazel-${{ matrix.build-config }}-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}
