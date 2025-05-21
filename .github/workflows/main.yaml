@@ -107,8 +107,6 @@ jobs:
       matrix:
         build-config: [fastbuild, opt]
     steps:
-    - name: Check disk usage
-      run: df -h
     - uses: actions/checkout@v4
     - name: Setup environment variables
       run: echo "CURRENT_DAY=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
@@ -149,5 +147,3 @@ jobs:
       run: bazel --output_base=/mnt/output_base build -c ${{ matrix.build-config }} ...
     - name: Run tests
       run: bazel --output_base=/mnt/output_base test -c ${{ matrix.build-config }} --define run_under_ci=1 --test_tag_filters="-perf_counters" --test_output=errors ...
-    - name: Check disk usage
-      run: df -h
