@@ -127,7 +127,7 @@ jobs:
         sudo ln -s /usr/bin/clang-19 /usr/bin/clang++
     - name: Setup bazel output base
       run: |
-        sudo mkdir /mnt/output_base && sudo chmod a+rw /mnt/output_base
+        sudo mkdir /mnt/output_base && sudo chown $USER:$USER /mnt/output_base
         ls -ld /mnt
         ls -ld /mnt/output_base
     - name: Cache Bazel
