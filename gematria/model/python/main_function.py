@@ -130,17 +130,17 @@ _MASTER = flags.DEFINE_string(
     '',
     'The BNS of the TensorFlow runtime to use for the processing.',
 )
-_GEMATRIA_MAX_BLOCKS_IN_BATCH = flags.DEFINE_integer(
-    'gematria_max_blocks_in_batch',
+_GEMATRIA_MAX_TRACES_IN_BATCH = flags.DEFINE_integer(
+    'gematria_max_traces_in_batch',
     None,
     (
-        'The maximal number of basic blocks in a single batch. In training'
-        ' mode, this option also triggers mini-batch training, and the size of'
-        ' each batch does not exceed this limit. In eval mode, the evaluation'
-        ' will be done on a single batch whose size does not exceed this limit.'
-        ' In prediction mode the input is split into batches that preserve the'
-        ' original order of the basic blocks and where none of the batches'
-        ' exceeds this limit'
+        'The maximal number of basic block traces in a single batch. In'
+        ' training mode, this option also triggers mini-batch training, and the'
+        ' size of each batch does not exceed this limit. In eval mode, the'
+        ' evaluation will be done on a single batch whose size does not exceed'
+        ' this limit. In prediction mode the input is split into batches that'
+        ' preserve the original order of the traces and where none of the'
+        ' batches exceeds this limit'
     ),
 )
 _GEMATRIA_MAX_INSTRUCTIONS_IN_BATCH = flags.DEFINE_integer(
@@ -153,7 +153,7 @@ _GEMATRIA_MAX_INSTRUCTIONS_IN_BATCH = flags.DEFINE_integer(
         ' serialized protocol buffers when processing data sets with large'
         ' basic blocks. In training mode, this puts an additional constraint to'
         ' batch selection, and may raduce the number of basic blocks in a given'
-        ' batch below --gematria_training_max_blocks_in_batch. In eval mode,'
+        ' batch below --gematria_training_max_traces_in_batch. In eval mode,'
         ' this option may cause some basic blocks to be dropped when they would'
         ' exceed the instruction limit. In prediction mode, the batches may be'
         ' dowsized to fit into the limit; basic blocks with more instructions'
@@ -798,7 +798,7 @@ def run_gematria_model_from_command_line_flags(
           tf_master=_MASTER.value,
           session_hooks=session_hooks,
           eval_interval_seconds=_GEMATRIA_EVAL_INTERVAL_SECS.value,
-          max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+          max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
           max_instructions_in_batch=max_instructions_in_batch,
       )
     elif _ACTION.value == model_options.Action.PREDICT:
@@ -806,7 +806,7 @@ def run_gematria_model_from_command_line_flags(
       output_blocks = inference.predict_for_protos(
           model,
           basic_block_protos,
-          max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+          max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
           max_instructions_in_batch=max_instructions_in_batch,
       )
       tfrecord.write_protos(_GEMATRIA_OUTPUT_FILE.value, output_blocks)
@@ -852,7 +852,7 @@ def run_gematria_model_from_command_line_flags(
       ):
         model.train(
             tuple(blocks_with_throughput),
-            max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+            max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
             max_instructions_in_batch=max_instructions_in_batch,
             num_epochs=_GEMATRIA_TRAINING_NUM_EPOCHS.value,
             randomize_batches=_GEMATRIA_TRAINING_RANDOMIZE_BATCHES.value,
