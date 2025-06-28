@@ -69,9 +69,9 @@ class TestModel(model_base.ModelBase):
     return 'TestModel'
 
   # @Override
-  def _add_basic_block_to_batch(self, block):
-    num_instructions = len(block.instructions)
-    self.num_visited_blocks += 1
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
+    num_instructions = sum(len(block) for block in blocks)
+    self.num_visited_blocks += len(blocks)
     self.num_scheduled_instructions += num_instructions
     if not self._use_deltas:
       self._batch_collected_outputs.append(
@@ -151,8 +151,9 @@ class TestModelWithVarGroups(model_base.ModelBase):
     super()._start_batch()
     self._batch_block_sizes = []
 
-  def _add_basic_block_to_batch(self, block):
-    self._batch_block_sizes.append(len(block.instructions))
+  # @Override
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
+    self._batch_block_sizes.extend(len(block.instructions) for block in blocks)
 
   def _make_batch_feed_dict(self):
     return {
@@ -192,7 +193,7 @@ class ModelBaseTest(model_test.TestCase):
     batch_size = 3
     model.num_visited_blocks = 0
     block_batch_schedule = model.schedule_batch(
-        self.blocks_with_throughput, max_blocks_in_batch=batch_size
+        self.blocks_with_throughput, max_traces_in_batch=batch_size
     )
     self.assertEqual(model.num_visited_blocks, batch_size)
     expected_outputs = block_batch_schedule['expected_outputs']
@@ -229,7 +230,7 @@ class ModelBaseTest(model_test.TestCase):
     batch_size = 3
     model.num_visited_blocks = 0
     block_batch_schedule = model.schedule_batch(
-        self.blocks_with_throughput, max_blocks_in_batch=batch_size
+        self.blocks_with_throughput, max_traces_in_batch=batch_size
     )
     self.assertEqual(model.num_visited_blocks, batch_size)
     expected_outputs = block_batch_schedule['expected_outputs']
@@ -436,7 +437,7 @@ class ModelBaseTest(model_test.TestCase):
   def check_predict(
       self,
       model,
-      max_blocks_in_batch,
+      max_traces_in_batch,
       max_instructions_in_batch,
       expected_batch_sizes,
   ):
@@ -447,7 +448,7 @@ class ModelBaseTest(model_test.TestCase):
 
     Args:
       model: The model used in tests.
-      max_blocks_in_batch: The maximal number of basic blocks in a batch, passed
+      max_traces_in_batch: The maximal number of traces in a batch, passed
         to model.predict().
       max_instructions_in_batch: The maximal number of instructions in a batch,
         passed to model.predict().
@@ -457,7 +458,7 @@ class ModelBaseTest(model_test.TestCase):
     output_blocks = tuple(
         model.predict(
             self.blocks,
-            max_blocks_in_batch=max_blocks_in_batch,
+            max_traces_in_batch=max_traces_in_batch,
             max_instructions_in_batch=max_instructions_in_batch,
         )
     )
@@ -594,7 +595,7 @@ class ModelBaseTest(model_test.TestCase):
     batch_size = 3
     model.num_visited_blocks = 0
     block_batch_schedule = model.schedule_batch(
-        self.blocks_with_throughput, max_blocks_in_batch=batch_size
+        self.blocks_with_throughput, max_traces_in_batch=batch_size
     )
     self.assertEqual(model.num_visited_blocks, batch_size)
     expected_outputs = block_batch_schedule['expected_outputs']

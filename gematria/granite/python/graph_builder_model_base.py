@@ -261,22 +261,26 @@ class GraphBuilderModelBase(
             dtype=self._graph_index_dtype,
         ),
         n_node=tf.constant(
-            self._batch_graph_builder.num_nodes_per_block,
+            self._batch_graph_builder.num_nodes_per_trace,
             dtype=self._graph_index_dtype,
         ),
         n_edge=tf.constant(
-            self._batch_graph_builder.num_edges_per_block,
+            self._batch_graph_builder.num_edges_per_trace,
             dtype=self._graph_index_dtype,
         ),
     )
 
   # @Override
-  def _add_basic_block_to_batch(self, block: basic_block.BasicBlock) -> None:
-    basic_block_was_added = self._batch_graph_builder.add_basic_block(block)
-    if not basic_block_was_added:
+  def _add_basic_blocks_from_trace_to_batch(
+      self, blocks: Sequence[basic_block.BasicBlock]
+  ) -> None:
+    blocks_were_added = self._batch_graph_builder.add_basic_blocks_from_trace(
+        blocks
+    )
+    if not blocks_were_added:
       # TODO(ondrasej): Better handling of blocks that can't be added to the
       # batch. For now, we just let the exception propagate out of the model and
       # let the user handle it.
       raise model_base.AddBasicBlockError(
-          f'Basic block could not be added to the batch: {block}'
+          f'Blocks from trace could not be added to the batch: {blocks}'
       )
