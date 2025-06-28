@@ -188,20 +188,30 @@ class BasicBlockGraphBuilder {
   // When this happens, the graph builder is left in the previous state, i.e. no
   // basic block is added to it.
   bool AddBasicBlock(const BasicBlock& block) {
-    return AddBasicBlockFromInstructions(block.instructions);
+    return AddBasicBlocksFromTrace(std::vector<BasicBlock>{block});
   }
-  // A version of AddBasicBlock that takes the list of instructions in the basic
-  // block instead of the basic block object itself.
-  bool AddBasicBlockFromInstructions(
-      const std::vector<Instruction>& instructions);
+
+  // Adds ordered basic block sequences to the graph builder. Each sequence or
+  // trace results in a single composite graph with basic blocks joined by
+  // edges representing taken branches.
+  bool AddBasicBlocksFromTrace(const std::vector<BasicBlock>& blocks);
 
   // Resets the graph builder so that it can be used to create a new graph from
   // scratch.
   void Reset();
 
   // Returns the number of graphs in the batch. This corresponds to the number
-  // of successful calls to AddBasicBlock() since the last call to Reset().
+  // of successful calls to AddBasicBlock() or AddBasicBlocksFromTrace()
+  // since the last call to Reset().
   int num_graphs() const {
+    return static_cast<int>(num_nodes_per_trace_.size());
+  }
+
+  // Returns the number of blocks in the batch. This includes blocks added by
+  // successful calls to AddBasicBlock() as well blocks belonging to traces
+  // added by successful calls to AddBasicBlocksFromTrace() since the last call
+  // Reset().
+  int num_blocks() const {
     return static_cast<int>(num_nodes_per_block_.size());
   }
 
@@ -225,15 +235,23 @@ class BasicBlockGraphBuilder {
   // proves to be slowing down the computation, we could create optimize this by
   // creating NumPy arrays directly from the C++ code.
 
-  // The number of nodes for each basic block in the batch. Corresponds to
-  // `GraphsTuple.n_node`.
+  // The number of nodes for each basic block in the batch.
   const std::vector<int>& num_nodes_per_block() const {
     return num_nodes_per_block_;
   }
-  // The number of edges for each basic block in the batch. Corresponds to
-  // `GraphsTuple.n_edge`.
+  // The number of edges for each basic block in the batch.
   const std::vector<int>& num_edges_per_block() const {
     return num_edges_per_block_;
+  }
+  // The number of nodes for each trace in the batch. Corresponds to
+  // `GraphsTuple.n_node`.
+  const std::vector<int>& num_nodes_per_trace() const {
+    return num_nodes_per_trace_;
+  }
+  // The number of edges for each trace in the batch. Corresponds to
+  // `GraphsTuple.n_edge`.
+  const std::vector<int>& num_edges_per_trace() const {
+    return num_edges_per_trace_;
   }
 
   // The types of the nodes in the batch.
@@ -296,6 +314,13 @@ class BasicBlockGraphBuilder {
   // model_base.ModelBase._delta_block_index_tensor.
   std::vector<int> DeltaBlockIndex() const;
 
+  // Returns the delta trace tensor. This is a 1D tensor similar to the delta
+  // block tensor, that contains the index of the trace to which an instruction
+  // belongs, for each instruction.
+  // TODO(vbshah): This seems unnecessary: the delta block tensor should be
+  // enough to aggregate outputs. Consider removing it.
+  std::vector<int> DeltaTraceIndex() const;
+
   // TODO(ondrasej): Consider adding methods that directly create NumPy arrays
   // from the data in this class to avoid the extra conversion.
 
@@ -349,8 +374,8 @@ class BasicBlockGraphBuilder {
 
     // The sizes of the vectors in the basic block graph builder at the time
     // when the transaction was created.
-    size_t prev_num_nodes_per_block_size_;
-    size_t prev_num_edges_per_block_size_;
+    size_t prev_num_nodes_per_trace_size_;
+    size_t prev_num_edges_per_trace_size_;
     size_t prev_node_types_size_;
     size_t prev_node_features_size_;
     size_t prev_edge_senders_size_;
@@ -410,6 +435,8 @@ class BasicBlockGraphBuilder {
 
   std::vector<int> num_nodes_per_block_;
   std::vector<int> num_edges_per_block_;
+  std::vector<int> num_nodes_per_trace_;
+  std::vector<int> num_edges_per_trace_;
 
   std::vector<NodeType> node_types_;
   std::vector<TokenIndex> node_features_;

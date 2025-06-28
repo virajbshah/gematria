@@ -25,7 +25,6 @@
 #include "gematria/basic_block/basic_block.h"
 #include "gematria/basic_block/basic_block_protos.h"
 #include "gematria/model/oov_token_behavior.h"
-#include "gematria/proto/basic_block.pb.h"
 #include "gematria/testing/parse_proto.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -79,7 +78,6 @@ class BasicBlockGraphBuilderTest : public testing::Test {
 
 TEST_F(BasicBlockGraphBuilderTest, EmptyBlock) {
   CreateBuilder(OutOfVocabularyTokenBehavior::ReturnError());
-  ASSERT_FALSE(builder_->AddBasicBlockFromInstructions({}));
   ASSERT_FALSE(builder_->AddBasicBlock(BasicBlock()));
 }
 
@@ -561,6 +559,68 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlocks) {
                   ElementsAre(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0)));
 
   EXPECT_THAT(builder_->DeltaBlockIndex(), ElementsAre(0, 1));
+}
+
+TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlockTraces) {
+  BasicBlock unit_block = BasicBlockFromProto(ParseTextProto(R"pb(
+    canonicalized_instructions: {
+      mnemonic: "NOT"
+      llvm_mnemonic: "NOT64r"
+      output_operands: { register_name: "RCX" }
+      input_operands: { register_name: "RCX" }
+    })pb"));
+
+  CreateBuilder(OutOfVocabularyTokenBehavior::ReturnError());
+  ASSERT_TRUE(builder_->AddBasicBlocksFromTrace(
+      std::vector<BasicBlock>{unit_block, unit_block}));
+  ASSERT_TRUE(builder_->AddBasicBlocksFromTrace(
+      std::vector<BasicBlock>{unit_block, unit_block, unit_block}));
+
+  EXPECT_EQ(builder_->num_graphs(), 2);
+  EXPECT_EQ(builder_->num_node_tokens(), std::size(kTokens));
+
+  EXPECT_EQ(builder_->num_nodes(), (3 + 2) + (3 + 2 + 2));
+  EXPECT_THAT(builder_->num_nodes_per_block(), ElementsAre(3, 2, 3, 2, 2));
+  EXPECT_THAT(builder_->num_nodes_per_trace(), ElementsAre(5, 7));
+
+  EXPECT_EQ(builder_->num_edges(), (2 + 3) + (2 + 3 + 3));
+  EXPECT_THAT(builder_->num_edges_per_block(), ElementsAre(2, 3, 2, 3, 3));
+  EXPECT_THAT(builder_->num_edges_per_trace(), ElementsAre(5, 8));
+
+  EXPECT_THAT(builder_->node_types(),
+              ElementsAre(NodeType::kInstruction, NodeType::kRegister,
+                          NodeType::kRegister, NodeType::kInstruction,
+                          NodeType::kRegister, NodeType::kInstruction,
+                          NodeType::kRegister, NodeType::kRegister,
+                          NodeType::kInstruction, NodeType::kRegister,
+                          NodeType::kInstruction, NodeType::kRegister));
+  EXPECT_THAT(
+      builder_->node_features(),
+      ElementsAre(TokenIndex("NOT"), TokenIndex("RCX"), TokenIndex("RCX"),
+                  TokenIndex("NOT"), TokenIndex("RCX"), TokenIndex("NOT"),
+                  TokenIndex("RCX"), TokenIndex("RCX"), TokenIndex("NOT"),
+                  TokenIndex("RCX"), TokenIndex("NOT"), TokenIndex("RCX")));
+  EXPECT_THAT(
+      builder_->edge_types(),
+      ElementsAre(EdgeType::kInputOperands, EdgeType::kOutputOperands,
+                  EdgeType::kStructuralDependency, EdgeType::kInputOperands,
+                  EdgeType::kOutputOperands, EdgeType::kInputOperands,
+                  EdgeType::kOutputOperands, EdgeType::kStructuralDependency,
+                  EdgeType::kInputOperands, EdgeType::kOutputOperands,
+                  EdgeType::kStructuralDependency, EdgeType::kInputOperands,
+                  EdgeType::kOutputOperands));
+
+  EXPECT_THAT(builder_->edge_senders(),
+              ElementsAre(1, 0, 0, 2, 3, 6, 5, 5, 7, 8, 8, 9, 10));
+  EXPECT_THAT(builder_->edge_receivers(),
+              ElementsAre(0, 2, 3, 3, 4, 5, 7, 8, 8, 9, 10, 10, 11));
+
+  EXPECT_THAT(
+      builder_->global_features(),
+      ElementsAre(ElementsAre(0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0),
+                  ElementsAre(0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0)));
+
+  EXPECT_THAT(builder_->DeltaBlockIndex(), ElementsAre(0, 1, 2, 3, 4));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, TwoNops) {
