@@ -141,19 +141,20 @@ _THROUGHPUT_SELECTION_FUNCTION: Mapping[
 
 def aggregate_throughputs(
     throughput_selection: options.ThroughputSelection,
-    block: throughput_pb2.BasicBlockWithThroughputProto,
-) -> throughput_pb2.BasicBlockWithThroughputProto:
+    trace: throughput_pb2.BasicBlockWithThroughputListProto,
+) -> throughput_pb2.BasicBlockWithThroughputListProto:
   """Applies an aggregation function to inverse throughput values in `block`."""
   throughput_filter = _THROUGHPUT_SELECTION_FUNCTION.get(throughput_selection)
   if throughput_filter is None:
     raise ValueError(
         f'Invalid throughput selection strategy: {throughput_selection!r}'
     )
-  for throughput in block.inverse_throughputs:
-    throughput_filter(throughput.inverse_throughput_cycles)
-    for prefix_throughputs in throughput.prefix_inverse_throughputs:
-      throughput_filter(prefix_throughputs.inverse_throughput_cycles)
-  return block
+  for block in trace.basic_blocks:
+    for throughput in block.inverse_throughputs:
+      throughput_filter(throughput.inverse_throughput_cycles)
+      for prefix_throughputs in throughput.prefix_inverse_throughputs:
+        throughput_filter(prefix_throughputs.inverse_throughput_cycles)
+  return trace
 
 
 def _scale_values(
@@ -163,51 +164,62 @@ def _scale_values(
     values[i] *= scaling_factor
 
 
-def drop_blocks_with_no_throughputs(
-    use_prefixes: bool, block: throughput_pb2.BasicBlockWithThroughputProto
-) -> Optional[throughput_pb2.BasicBlockWithThroughputProto]:
-  """Removes basic blocks that do not have any inverse throughput values.
+def drop_traces_with_no_throughputs(
+    use_prefixes: bool, trace: throughput_pb2.BasicBlockWithThroughputListProto
+) -> Optional[throughput_pb2.BasicBlockWithThroughputListProto]:
+  """Removes basic block traces that do not have any inverse throughput values.
 
-  Returns `block` unchanged if it has at least one inverse throughput value for
-  at least one task. When `use_prefixes` is False, checks only per-block inverse
-  throughputs; when it is True, checks also prefix inverse throughputs.
+  Returns `trace` unchanged if each block has at least one inverse throughput
+  value for at least one task. When `use_prefixes` is False, checks only
+  per-block inverse throughputs; when it is True, checks also prefix inverse
+  throughputs.
 
   Args:
     use_prefixes: Determines whether prefix inverse throughputs are considered.
-    block: The basic block proto to inspect.
+    trace: The basic block trace proto to inspect.
 
   Returns:
-    None when `block` has no inverse throughputs; otherwise, returns `block`.
+    None when `trace` has no inverse throughputs; otherwise, returns `trace`.
   """
-  for throughput in block.inverse_throughputs:
-    if throughput.inverse_throughput_cycles:
-      return block
-  if use_prefixes:
+  for block in trace.basic_blocks:
+    has_throughputs = False
     for throughput in block.inverse_throughputs:
-      for prefix_throughput in throughput.prefix_inverse_throughputs:
-        if prefix_throughput.inverse_throughput_cycles:
-          return block
-  return None
+      if throughput.inverse_throughput_cycles:
+        has_throughputs = True
+        break
+    if not has_throughputs and use_prefixes:
+      for throughput in block.inverse_throughputs:
+        for prefix_throughput in throughput.prefix_inverse_throughputs:
+          if prefix_throughput.inverse_throughput_cycles:
+            has_throughputs = True
+            break
+        if has_throughputs:
+          break
+    if not has_throughputs:
+      return None
+  return trace
 
 
 def scale_throughputs(
-    scaling_factor: float, block: throughput_pb2.BasicBlockWithThroughputProto
-) -> Optional[throughput_pb2.BasicBlockWithThroughputProto]:
+    scaling_factor: float,
+    trace: throughput_pb2.BasicBlockWithThroughputListProto,
+) -> Optional[throughput_pb2.BasicBlockWithThroughputListProto]:
   """Scales the inverse throughputs by scaling_factor in place."""
-  for throughput in block.inverse_throughputs:
-    _scale_values(throughput.inverse_throughput_cycles, scaling_factor)
-    for prefix_throughputs in throughput.prefix_inverse_throughputs:
-      _scale_values(
-          prefix_throughputs.inverse_throughput_cycles, scaling_factor
-      )
-  return block
+  for block in trace.basic_blocks:
+    for throughput in block.inverse_throughputs:
+      _scale_values(throughput.inverse_throughput_cycles, scaling_factor)
+      for prefix_throughputs in throughput.prefix_inverse_throughputs:
+        _scale_values(
+            prefix_throughputs.inverse_throughput_cycles, scaling_factor
+        )
+  return trace
 
 
 def select_throughputs(
     source_filters: Sequence[re.Pattern[str]],
-    block: throughput_pb2.BasicBlockWithThroughputProto,
-) -> Optional[throughput_pb2.BasicBlockWithThroughputProto]:
-  """Selects inverse throughputs in a block based on provided filters.
+    trace: throughput_pb2.BasicBlockWithThroughputListProto,
+) -> Optional[throughput_pb2.BasicBlockWithThroughputListProto]:
+  """Selects inverse throughputs in each trace block based on provided filters.
 
   Modifies `block.inverse_throughputs` so that the number of items is equal to
   the number of items in `source_filters`. In the output proto
@@ -215,22 +227,23 @@ def select_throughputs(
   Args:
     source_filters: A sequence of compiled regexps to match inverse throughput
       sources that should be kept in the block proto.
-    block: The basic block proto to filter; the proto is modified in place and
-      returned.
+    trace: The basic block trace proto to filter; the proto is modified in place
+      and returned.
 
   Returns:
-    The block with inverse throughputs corresponding to the filters.
+    The trace with inverse throughputs corresponding to the filters.
   """
-  selected_throughputs = []
-  for source_filter in source_filters:
-    for throughput in block.inverse_throughputs:
-      if source_filter.match(throughput.source):
-        selected_throughputs.append(throughput)
-        break
-    else:
-      # If we did not find any throughputs for the filter, we add an empty proto
-      # and the value will be masked (or removed) later.
-      selected_throughputs.append(throughput_pb2.ThroughputWithSourceProto())
-  del block.inverse_throughputs[:]
-  block.inverse_throughputs.extend(selected_throughputs)
-  return block
+  for block in trace.basic_blocks:
+    selected_throughputs = []
+    for source_filter in source_filters:
+      for throughput in block.inverse_throughputs:
+        if source_filter.match(throughput.source):
+          selected_throughputs.append(throughput)
+          break
+      else:
+        # If we did not find any throughputs for the filter, we add an empty
+        # proto and the value will be masked (or removed) later.
+        selected_throughputs.append(throughput_pb2.ThroughputWithSourceProto())
+    del block.inverse_throughputs[:]
+    block.inverse_throughputs.extend(selected_throughputs)
+  return trace
