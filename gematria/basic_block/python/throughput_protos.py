@@ -13,6 +13,7 @@
 # limitations under the License.
 """Contains proto conversion functions for basic blocks with throughput."""
 
+from typing import Sequence
 from gematria.basic_block.python import basic_block_protos
 from gematria.basic_block.python import throughput
 from gematria.proto import throughput_pb2
@@ -43,3 +44,13 @@ def block_with_throughput_from_proto(
       block=basic_block_protos.basic_block_from_proto(proto.basic_block),
       throughputs=throughputs,
   )
+
+
+def block_with_throughput_list_from_proto(
+    proto: throughput_pb2.BasicBlockWithThroughputListProto,
+) -> Sequence[throughput.BasicBlockWithThroughput]:
+  """Converts `proto` to a BasicBlockWithThroughputProto list."""
+  return [
+      block_with_throughput_from_proto(block_proto)
+      for block_proto in proto.basic_blocks
+  ]

@@ -51,7 +51,7 @@ class TestTokenModel(token_model.TokenModel):
   def _make_batch_feed_dict(self):
     raise NotImplementedError()
 
-  def _add_basic_block_to_batch(self, block):
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
     raise NotImplementedError()
 
 
