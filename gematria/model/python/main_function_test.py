@@ -79,9 +79,11 @@ class TestModel(model_base.ModelBase):
     self.num_instructions_in_batch = 0
 
   # @Override
-  def _add_basic_block_to_batch(self, block):
-    self.num_blocks_in_batch += 1
-    self.num_instructions_in_batch += len(block.instructions)
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
+    self.num_blocks_in_batch += len(blocks)
+    self.num_instructions_in_batch += sum(
+        len(block.instructions) for block in blocks
+    )
 
   # @Override
   def _make_batch_feed_dict(self):
@@ -172,7 +174,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     summary_dir = '/summary/dir'
     master = 'local'
     eval_interval_seconds = 987
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     collected_percentile_ranks = [10, 20, 30, 90]
 
@@ -199,7 +201,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     FLAGS.gematria_loss_normalization = (
         model_options.ErrorNormalization.PERCENTAGE_ERROR
     )
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
 
     main_function.run_gematria_model_from_command_line_flags(
@@ -235,7 +237,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
         tf_master=master,
         session_hooks=None,
         eval_interval_seconds=eval_interval_seconds,
-        max_blocks_in_batch=max_blocks_in_batch,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
     )
 
@@ -248,7 +250,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     this setup and checks the output.
     """
     predicted_value = 123456
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     checkpoint_directory = path.join(
         self.work_directory.full_path, 'checkpoint.ckpt'
@@ -284,7 +286,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     # Note that throughput source filters are ignored when the action is
     # 'predict'.
     FLAGS.gematria_throughput_source_filter = ['test:.*']
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     main_function.run_gematria_model_from_command_line_flags(
         MockModel, dtype=tf.dtypes.float32
@@ -293,7 +295,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     inference.predict_for_protos.assert_called_once_with(
         model,
         mock.ANY,  # An iterable object reading the basic blocks.
-        max_blocks_in_batch=max_blocks_in_batch,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
     )
 
@@ -332,7 +334,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     this setup and checks the output.
     """
     predicted_value = 123456
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     checkpoint_directory = path.join(
         self.work_directory.full_path, 'checkpoint.ckpt'
@@ -353,7 +355,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     # 'predict'.
     FLAGS.gematria_throughput_source_filter = ['test:.*']
     FLAGS.gematria_task_names = ['test_task']
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     main_function.run_gematria_model_from_command_line_flags(
         TestModel, dtype=tf.dtypes.float32
@@ -395,7 +397,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     be restored, and that it contains expected values.
     """
     num_epochs = 10
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     learning_rate = 0.321
     randomize_batches = False
@@ -422,7 +424,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     )
     FLAGS.gematria_training_num_epochs = num_epochs
     FLAGS.gematria_training_randomize_batches = randomize_batches
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     FLAGS.gematria_use_seq2seq_loss = use_seq2seq_loss
     FLAGS.gematria_learning_rate = learning_rate
@@ -450,7 +452,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     self.assertEqual(model._use_delta_loss, use_seq2seq_loss)
     model.train.assert_called_once_with(
         matchers.SequenceEqual(expected_blocks),
-        max_blocks_in_batch=max_blocks_in_batch,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
         num_epochs=num_epochs,
         randomize_batches=randomize_batches,
@@ -491,7 +493,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     artifacts.
     """
     num_epochs = 10
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     randomize_batches = False
     training_throughput_selection = io_options.ThroughputSelection.MIN
@@ -511,7 +513,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     )
     FLAGS.gematria_training_num_epochs = num_epochs
     FLAGS.gematria_training_randomize_batches = randomize_batches
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     FLAGS.gematria_training_throughput_selection = training_throughput_selection
 
@@ -534,7 +536,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
 
     model.train.assert_called_once_with(
         matchers.SequenceEqual(expected_blocks),
-        max_blocks_in_batch=max_blocks_in_batch,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
         num_epochs=num_epochs,
         randomize_batches=randomize_batches,
@@ -552,7 +554,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     artifacts.
     """
     num_epochs = 10
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     randomize_batches = False
     training_throughput_selection = io_options.ThroughputSelection.MIN
@@ -573,7 +575,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     )
     FLAGS.gematria_training_num_epochs = num_epochs
     FLAGS.gematria_training_randomize_batches = randomize_batches
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     FLAGS.gematria_training_throughput_selection = training_throughput_selection
     FLAGS.gematria_input_file_scaling = throughput_scaling_factor
@@ -598,7 +600,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
 
     model.train.assert_called_once_with(
         matchers.SequenceEqual(expected_blocks),
-        max_blocks_in_batch=max_blocks_in_batch,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
         num_epochs=num_epochs,
         randomize_batches=randomize_batches,
@@ -779,7 +781,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     were recorded and stored at the expected directory.
     """
     num_epochs = 10
-    max_blocks_in_batch = 15
+    max_traces_in_batch = 15
     max_instructions_in_batch = 124
     learning_rate = 0.321
     randomize_batches = False
@@ -808,7 +810,7 @@ class GematriaMainFunctionTest(model_test.TestCase):
     FLAGS.gematria_summary_dir = summary_dir
     FLAGS.gematria_training_num_epochs = num_epochs
     FLAGS.gematria_training_randomize_batches = randomize_batches
-    FLAGS.gematria_max_blocks_in_batch = max_blocks_in_batch
+    FLAGS.gematria_max_traces_in_batch = max_traces_in_batch
     FLAGS.gematria_max_instructions_in_batch = max_instructions_in_batch
     FLAGS.gematria_use_seq2seq_loss = use_seq2seq_loss
     FLAGS.gematria_learning_rate = learning_rate
