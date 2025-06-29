@@ -90,6 +90,7 @@
 #define GEMATRIA_GRANITE_GRAPH_BUILDER_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -130,7 +131,8 @@ enum class EdgeType {
   // embedding vector table; removing it would change the size of this table and
   // it would invalidate existing checkpoints.
   kReverseStructuralDependency = 7,
-  kInstructionPrefix = 8,
+  kTakenBranch = 8,
+  kInstructionPrefix = 9,
 };
 
 std::ostream& operator<<(std::ostream& os, NodeType node_type);
@@ -384,9 +386,18 @@ class BasicBlockGraphBuilder {
     size_t prev_global_features_size_;
   };
 
+  // The state built by previous calls to `AddInstruction` to, passed to the
+  // next call to correctly connect new instructions to previous ones.
+  struct AddInstructionState {
+    NodeIndex instruction_node;
+    bool instruction_is_conditional_branch = false;
+    bool instruction_is_unconditional_branch = false;
+    uint64_t expected_instruction_address;
+  };
+
   // Adds nodes and edges for a single instruction of a basic block.
-  NodeIndex AddInstruction(const Instruction& instruction,
-                           NodeIndex previous_instruction_node);
+  AddInstructionState AddInstruction(const Instruction& instruction,
+                                     const AddInstructionState& previous_state);
 
   // Adds nodes and edges for a single input operand of an instruction.
   bool AddInputOperand(NodeIndex instruction_node,
