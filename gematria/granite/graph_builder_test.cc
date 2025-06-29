@@ -49,7 +49,9 @@ constexpr absl::string_view kTokens[] = {
     // 5
     "MOV", "NOT", "R14", "R15", "RAX",
     // 10
-    "RBX", "RCX", "RDI", kUnknownToken, "NOP", "LOCK"};
+    "RBX", "RCX", "RDI", kUnknownToken, "NOP",
+    // 15
+    "LOCK", "CMP", "JNE", "JMP", "RFLAGS"};
 
 // Names of Instruction annotations used in tests.
 const std::vector<std::string> kAnnotationNames{"cache_miss_freq",
@@ -117,9 +119,9 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstruction) {
                           EdgeType::kAddressDisplacement,
                           EdgeType::kInputOperands, EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0,
+                                      0, 0, 0, 0, 0, 0)));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithPrefix) {
@@ -159,9 +161,9 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithPrefix) {
                   EdgeType::kAddressBaseRegister, EdgeType::kInputOperands,
                   EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(0, 0, 1, 2, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(0, 0, 1, 2, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0,
+                                      0, 1, 0, 0, 0, 0)));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithAnnotation) {
@@ -194,9 +196,9 @@ TEST_F(BasicBlockGraphBuilderTest, SingleInstructionWithAnnotation) {
   EXPECT_THAT(builder_->edge_types(),
               ElementsAre(EdgeType::kInputOperands, EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0,
+                                      0, 0, 0, 0, 0, 0)));
 
   EXPECT_THAT(builder_->annotation_names(),
               ElementsAre("cache_miss_freq", "other_annotation"));
@@ -307,9 +309,9 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidMnemonic_ReplaceToken) {
                           EdgeType::kAddressDisplacement,
                           EdgeType::kInputOperands, EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1,
+                                      0, 0, 0, 0, 0, 0)));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, InvalidRegister_ReplaceToken) {
@@ -349,9 +351,9 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidRegister_ReplaceToken) {
                           EdgeType::kAddressDisplacement,
                           EdgeType::kInputOperands, EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1,
+                                      0, 0, 0, 0, 0, 0)));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, InvalidAddress_ReplaceToken) {
@@ -395,9 +397,9 @@ TEST_F(BasicBlockGraphBuilderTest, InvalidAddress_ReplaceToken) {
                           EdgeType::kAddressDisplacement,
                           EdgeType::kInputOperands, EdgeType::kOutputOperands));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+                                      0, 0, 0, 0, 0, 0)));
 }
 
 // Tests that the instruction nodes within the basic block are connected through
@@ -553,10 +555,11 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlocks) {
   EXPECT_THAT(builder_->edge_senders(), ElementsAre(1, 0, 4, 3));
   EXPECT_THAT(builder_->edge_receivers(), ElementsAre(0, 2, 3, 5));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0),
-                  ElementsAre(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0,
+                                      0, 0, 0, 0, 0, 0),
+                          ElementsAre(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0,
+                                      0, 0, 0, 0, 0, 0)));
 
   EXPECT_THAT(builder_->DeltaBlockIndex(), ElementsAre(0, 1));
 }
@@ -615,12 +618,108 @@ TEST_F(BasicBlockGraphBuilderTest, MultipleBasicBlockTraces) {
   EXPECT_THAT(builder_->edge_receivers(),
               ElementsAre(0, 2, 3, 3, 4, 5, 7, 8, 8, 9, 10, 10, 11));
 
-  EXPECT_THAT(
-      builder_->global_features(),
-      ElementsAre(ElementsAre(0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0),
-                  ElementsAre(0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0)));
+  EXPECT_THAT(builder_->global_features(),
+              ElementsAre(ElementsAre(0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0,
+                                      0, 0, 0, 0, 0, 0),
+                          ElementsAre(0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0,
+                                      0, 0, 0, 0, 0, 0)));
 
   EXPECT_THAT(builder_->DeltaBlockIndex(), ElementsAre(0, 1, 2, 3, 4));
+}
+
+// Check that edges corresponding to taken branches are correctly added and are
+// of the correct type.
+TEST_F(BasicBlockGraphBuilderTest, TakenBranches) {
+  CreateBuilder(OutOfVocabularyTokenBehavior::ReturnError());
+  ASSERT_TRUE(builder_->AddBasicBlocksFromTrace(std::vector<BasicBlock>{
+      BasicBlockFromProto(ParseTextProto(R"pb(
+        machine_instructions: {
+          address: 4096
+          assembly: "\tjmp\t102"
+          machine_code: "\353f"
+        }
+        canonicalized_instructions: {
+          mnemonic: "JMP"
+          llvm_mnemonic: "JMP_1"
+          input_operands: { immediate_value: 102 }
+        }
+      )pb")),
+      BasicBlockFromProto(ParseTextProto(R"pb(
+        machine_instructions: {
+          address: 4200
+          assembly: "\tcmpl\t$94570706, %rax"
+          machine_code: "H=\322\010\243\005"
+        }
+        machine_instructions: {
+          address: 4206
+          assembly: "\tjne\t19"
+          machine_code: "u\023"
+        }
+        machine_instructions: {
+          address: 4208
+          assembly: "\tcmpl\t$221, %rax"
+          machine_code: "H=\335\000\000\000"
+        }
+        machine_instructions: {
+          address: 4214
+          assembly: "\tjne\t28"
+          machine_code: "u\034"
+        }
+        canonicalized_instructions: {
+          mnemonic: "CMP"
+          llvm_mnemonic: "CMP32i32"
+          input_operands: { immediate_value: 94570706 }
+          implicit_output_operands: { register_name: "RFLAGS" }
+          implicit_input_operands: { register_name: "RAX" }
+        }
+        canonicalized_instructions: {
+          mnemonic: "JNE"
+          llvm_mnemonic: "JCC_1"
+          input_operands: { immediate_value: 19 }
+          input_operands: { immediate_value: 5 }
+          implicit_input_operands: { register_name: "RFLAGS" }
+        }
+        canonicalized_instructions: {
+          mnemonic: "CMP"
+          llvm_mnemonic: "CMP32i32"
+          input_operands: { immediate_value: 221 }
+          implicit_output_operands: { register_name: "RFLAGS" }
+          implicit_input_operands: { register_name: "RAX" }
+        }
+        canonicalized_instructions: {
+          mnemonic: "JNE"
+          llvm_mnemonic: "JCC_1"
+          input_operands: { immediate_value: 28 }
+          input_operands: { immediate_value: 5 }
+          implicit_input_operands: { register_name: "RFLAGS" }
+        }
+      )pb")),
+      BasicBlockFromProto(ParseTextProto(R"pb(
+        machine_instructions: {
+          address: 4242
+          assembly: "\tnotq\t%rcx"
+          machine_code: "H\367\321"
+        }
+        canonicalized_instructions: {
+          mnemonic: "NOT"
+          llvm_mnemonic: "NOT64r"
+          output_operands: { register_name: "RCX" }
+          input_operands: { register_name: "RCX" }
+        }
+      )pb"))}));
+
+  EXPECT_THAT(
+      builder_->edge_types(),
+      ElementsAre(EdgeType::kInputOperands, EdgeType::kTakenBranch,
+                  EdgeType::kInputOperands, EdgeType::kInputOperands,
+                  EdgeType::kOutputOperands, EdgeType::kStructuralDependency,
+                  EdgeType::kInputOperands, EdgeType::kInputOperands,
+                  EdgeType::kInputOperands, EdgeType::kStructuralDependency,
+                  EdgeType::kInputOperands, EdgeType::kInputOperands,
+                  EdgeType::kOutputOperands, EdgeType::kStructuralDependency,
+                  EdgeType::kInputOperands, EdgeType::kInputOperands,
+                  EdgeType::kInputOperands, EdgeType::kTakenBranch,
+                  EdgeType::kInputOperands, EdgeType::kOutputOperands));
 }
 
 TEST_F(BasicBlockGraphBuilderTest, TwoNops) {

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <ostream>
@@ -35,6 +36,7 @@ namespace {
 constexpr BasicBlockGraphBuilder::NodeIndex kInvalidNode(-1);
 constexpr BasicBlockGraphBuilder::TokenIndex kInvalidTokenIndex(-1);
 constexpr double kDefaultInstructionAnnotation(-1);
+constexpr uint64_t kUnknownAddress(0);
 
 std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> MakeIndex(
     std::vector<std::string> items) {
@@ -94,6 +96,7 @@ std::ostream& operator<<(std::ostream& os, EdgeType edge_type) {
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressSegmentRegister);
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressDisplacement);
     EXEGESIS_ENUM_CASE(os, EdgeType::kReverseStructuralDependency);
+    EXEGESIS_ENUM_CASE(os, EdgeType::kTakenBranch);
     EXEGESIS_ENUM_CASE(os, EdgeType::kInstructionPrefix);
   }
   return os;
@@ -190,14 +193,16 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
   }
 }
 
-BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddInstruction(
-    const Instruction& instruction, NodeIndex previous_instruction_node) {
+BasicBlockGraphBuilder::AddInstructionState
+BasicBlockGraphBuilder::AddInstruction(
+    const Instruction& instruction, const AddInstructionState& previous_state) {
   // Add the instruction node.
   const NodeIndex instruction_node =
       AddNode(NodeType::kInstruction, instruction.mnemonic);
   if (instruction_node == kInvalidNode) {
-    return kInvalidNode;
+    return AddInstructionState{.instruction_node = kInvalidNode};
   }
+  AddInstructionState state = {instruction_node};
 
   // Store instruction annotations.
   AddInstructionAnnotations(instruction);
@@ -206,36 +211,74 @@ BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddInstruction(
   for (const std::string& prefix : instruction.prefixes) {
     const NodeIndex prefix_node = AddNode(NodeType::kPrefix, prefix);
     if (prefix_node == kInvalidNode) {
-      return kInvalidNode;
+      return AddInstructionState{.instruction_node = kInvalidNode};
     }
     AddEdge(EdgeType::kInstructionPrefix, prefix_node, instruction_node);
   }
 
-  // Add a structural dependency edge from the previous instruction.
-  if (previous_instruction_node >= 0) {
-    AddEdge(EdgeType::kStructuralDependency, previous_instruction_node,
-            instruction_node);
+  // Add a structural dependency or taken branch edge from the previous
+  // instruction, depending on the previous `AddInstruction` state.
+  if (previous_state.instruction_node >= 0) {
+    if (previous_state.instruction_is_unconditional_branch ||
+        (previous_state.instruction_is_conditional_branch &&
+         instruction.address != previous_state.expected_instruction_address)) {
+      AddEdge(EdgeType::kTakenBranch, previous_state.instruction_node,
+              instruction_node);
+    } else {
+      AddEdge(EdgeType::kStructuralDependency, previous_state.instruction_node,
+              instruction_node);
+    }
   }
 
   // Add edges for input operands. And nodes too, if necessary.
   for (const InstructionOperand& operand : instruction.input_operands) {
-    if (!AddInputOperand(instruction_node, operand)) return kInvalidNode;
+    if (!AddInputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
   }
   for (const InstructionOperand& operand :
        instruction.implicit_input_operands) {
-    if (!AddInputOperand(instruction_node, operand)) return kInvalidNode;
+    if (!AddInputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
   }
 
   // Add edges and nodes for output operands.
   for (const InstructionOperand& operand : instruction.output_operands) {
-    if (!AddOutputOperand(instruction_node, operand)) return kInvalidNode;
+    if (!AddOutputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
   }
   for (const InstructionOperand& operand :
        instruction.implicit_output_operands) {
-    if (!AddOutputOperand(instruction_node, operand)) return kInvalidNode;
+    if (!AddOutputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
   }
 
-  return instruction_node;
+  // Check if the instruction is a taken branch to choose the edge type
+  // connecting it to the next instruction.
+  // TODO(vbshah): Consider using a better way to check for branching
+  // instructions.
+  const std::string_view instruction_mnemonic_start(
+      instruction.llvm_mnemonic.data(), 3);
+  if (instruction.size == 0) {
+    // Do nothing.
+    // NOTE(vbshah): Instruction sizes may be unavailable, and require datasets
+    // to contain `MachineInstructionProto`s which are otherwise not strictly
+    // required at any point. In this case, we cannot create taken branch edges
+    // and skip the logic deciding whether one should be created instead of a
+    // structural dependency edge.
+  } else if (instruction_mnemonic_start == "JCC") {
+    state.instruction_is_conditional_branch = true;
+    state.expected_instruction_address = instruction.address + instruction.size;
+  } else if (instruction_mnemonic_start == "JMP" ||
+             instruction_mnemonic_start == "CALL" ||
+             instruction_mnemonic_start == "RET") {
+    state.instruction_is_unconditional_branch = true;
+  }
+
+  return state;
 }
 
 bool BasicBlockGraphBuilder::AddBasicBlocksFromTrace(
@@ -250,7 +293,10 @@ bool BasicBlockGraphBuilder::AddBasicBlocksFromTrace(
   const int prev_trace_num_nodes = num_nodes();
   const int prev_trace_num_edges = num_edges();
 
-  NodeIndex previous_instruction_node = kInvalidNode;
+  AddInstructionState previous_state = {
+      .instruction_node = kInvalidNode,
+      .expected_instruction_address = kUnknownAddress,
+  };
   for (const BasicBlock& block : blocks) {
     if (block.instructions.empty()) return false;
 
@@ -258,12 +304,11 @@ bool BasicBlockGraphBuilder::AddBasicBlocksFromTrace(
     const int prev_block_num_edges = num_edges();
 
     for (const Instruction& instruction : block.instructions) {
-      NodeIndex instruction_node =
-          AddInstruction(instruction, previous_instruction_node);
-      if (instruction_node == kInvalidNode) {
+      AddInstructionState state = AddInstruction(instruction, previous_state);
+      if (state.instruction_node == kInvalidNode) {
         return false;
       }
-      previous_instruction_node = instruction_node;
+      previous_state = state;
     }
 
     // Record the number of nodes and edges created for this block.
