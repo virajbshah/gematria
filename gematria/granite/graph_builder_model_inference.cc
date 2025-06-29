@@ -676,7 +676,7 @@ GraphBuilderModelInference::RunInference() {
 
   const std::vector<bool> instruction_node_mask =
       graph_builder_->InstructionNodeMask();
-  const std::vector<std::vector<float>>& instruction_annotations =
+  const std::vector<std::vector<double>>& instruction_annotations =
       graph_builder_->instruction_annotations();
   const std::vector<int> delta_block_index = graph_builder_->DeltaBlockIndex();
 
@@ -769,7 +769,7 @@ GraphBuilderModelInference::RunInference() {
         input_tensor_to_idx_[static_cast<int>(InputTensor::kDeltaBlockIndex)]));
   }
   if (uses_annotations_) {
-    GEMATRIA_RETURN_IF_ERROR(FillTensorFromStdVectorMatrix<float>(
+    GEMATRIA_RETURN_IF_ERROR(FillTensorFromStdVectorMatrix<double>(
         interpreter_.get(), instruction_annotations,
         input_tensor_to_idx_[static_cast<int>(
             InputTensor::kInstructionAnnotations)]));
@@ -806,7 +806,7 @@ GraphBuilderModelInference::RunInference() {
                                    output_tensor->dims->data[0]);
   }
   const int num_tasks = output_tensor->dims->data[1];
-  auto* const output_tensor_data = interpreter_->typed_output_tensor<float>(0);
+  auto* const output_tensor_data = interpreter_->typed_output_tensor<double>(0);
   assert(output_tensor_data != nullptr);
 
   std::vector<OutputType> output;
