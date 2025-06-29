@@ -34,6 +34,7 @@ namespace {
 
 constexpr BasicBlockGraphBuilder::NodeIndex kInvalidNode(-1);
 constexpr BasicBlockGraphBuilder::TokenIndex kInvalidTokenIndex(-1);
+constexpr double kDefaultInstructionAnnotation(-1);
 
 std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> MakeIndex(
     std::vector<std::string> items) {
@@ -172,7 +173,7 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
               : FindTokenOrDie(
                     node_tokens_,
                     out_of_vocabulary_behavior.replacement_token())) {
-  instruction_annotations_ = std::vector<std::vector<float>>();
+  instruction_annotations_ = std::vector<std::vector<double>>();
 
   // Make sure annotations are stored in a stable order as long the same
   // annotation names are used.
@@ -183,7 +184,7 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
 
   // Store row indices corresponding to specific annotation names.
   int annotation_idx = 0;
-  for (auto& annotation_name : annotation_names_) {
+  for (const std::string& annotation_name : annotation_names_) {
     annotation_name_to_idx_[annotation_name] = annotation_idx;
     ++annotation_idx;
   }
@@ -198,15 +199,8 @@ BasicBlockGraphBuilder::NodeIndex BasicBlockGraphBuilder::AddInstruction(
     return kInvalidNode;
   }
 
-  // Store the annotations for later use (inclusion in embeddings), using -1
-  // as a default value wherever annotations are missing.
-  std::vector<float> row = std::vector<float>(annotation_names_.size(), -1);
-  for (const auto& [name, value] : instruction.instruction_annotations) {
-    const auto annotation_index = annotation_name_to_idx_.find(name);
-    if (annotation_index == annotation_name_to_idx_.end()) continue;
-    row[annotation_index->second] = value;
-  }
-  instruction_annotations_.push_back(row);
+  // Store instruction annotations.
+  AddInstructionAnnotations(instruction);
 
   // Add nodes for prefixes of the instruction.
   for (const std::string& prefix : instruction.prefixes) {
@@ -451,6 +445,20 @@ void BasicBlockGraphBuilder::AddEdge(EdgeType edge_type, NodeIndex sender,
   edge_types_.push_back(edge_type);
 }
 
+void BasicBlockGraphBuilder::AddInstructionAnnotations(
+    const Instruction& instruction) {
+  // Store the annotations for later use, using `kDefaultInstructionAnnotation`
+  // as a default value wherever annotations are missing.
+  std::vector<double> row = std::vector<double>(annotation_names_.size(),
+                                              kDefaultInstructionAnnotation);
+  for (const auto& [name, value] : instruction.instruction_annotations) {
+    const auto annotation_index = annotation_name_to_idx_.find(name);
+    if (annotation_index == annotation_name_to_idx_.end()) continue;
+    row[annotation_index->second] = value;
+  }
+  instruction_annotations_.push_back(row);
+}
+
 std::vector<int> BasicBlockGraphBuilder::EdgeFeatures() const {
   std::vector<int> edge_features(num_edges());
   for (int i = 0; i < num_edges(); ++i) {
@@ -495,9 +503,10 @@ void StrAppendList(std::stringstream& buffer, std::string_view list_name,
   buffer << list_name << " = [";
   bool first = true;
   for (const auto& item : items) {
-    if (!first) {
-      buffer << ",";
+    if (first) {
       first = false;
+    } else {
+      buffer << ", ";
     }
     buffer << item;
   }
