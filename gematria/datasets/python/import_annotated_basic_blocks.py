@@ -28,7 +28,7 @@ from absl import logging
 from gematria.datasets.python import annotating_importer
 from gematria.llvm.python import canonicalizer
 from gematria.llvm.python import llvm_architecture_support
-from gematria.proto import basic_block_pb2
+from gematria.proto import throughput_pb2
 from pybind11_abseil import status
 import tensorflow as tf
 
@@ -93,7 +93,7 @@ def main(argv: Sequence[str]) -> None:
   with tf.io.TFRecordWriter(_OUTPUT_TFRECORD_FILE.value) as writer:
     for proto in protos:
       writer.write(proto.SerializeToString())
-  print(f'Wrote {len(protos)} (pseudo-)basic block(s).')
+  print(f'Wrote {len(protos)} trace(s).')
 
 
 if __name__ == '__main__':

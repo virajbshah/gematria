@@ -15,25 +15,22 @@
 #include "gematria/datasets/annotating_importer.h"
 
 #include <cstdint>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "gematria/basic_block/basic_block.h"
 #include "gematria/basic_block/basic_block_protos.h"
 #include "gematria/datasets/bhive_importer.h"
-#include "gematria/llvm/canonicalizer.h"
 #include "gematria/llvm/disassembler.h"
 #include "gematria/llvm/llvm_to_absl.h"
+#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/throughput.pb.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -57,9 +54,6 @@ constexpr int PROT_EXEC = 0x4;
 #endif
 
 namespace gematria {
-
-AnnotatingImporter::AnnotatingImporter(const Canonicalizer *canonicalizer)
-    : importer_(canonicalizer) {}
 
 absl::StatusOr<const quipper::PerfDataProto *> AnnotatingImporter::LoadPerfData(
     std::string_view file_name) {
@@ -99,7 +93,8 @@ absl::StatusOr<const quipper::PerfDataProto_MMapEvent *>
 AnnotatingImporter::GetMainMapping(
     const llvm::object::ELFObjectFileBase *elf_object,
     const quipper::PerfDataProto *perf_data) {
-  llvm::StringRef file_name = GetBasenameFromPath(elf_object->getFileName());
+  llvm::StringRef file_name =
+      GetBasenameFromPath(elf_object->getFileName().str());
   // TODO(vbshah): There may be multiple mappings corresponding to the profiled
   // binary. Record and match samples from all of them instead of assuming
   // there is only one and returning after finding it.
@@ -162,10 +157,11 @@ AnnotatingImporter::GetELFFromBinary(const llvm::object::Binary *binary) {
 }
 
 absl::StatusOr<std::vector<DisassembledInstruction>>
-AnnotatingImporter::GetELFSlice(
-    const llvm::object::ELFObjectFileBase *elf_object, uint64_t range_begin,
-    uint64_t range_end, uint64_t offset) {
+AnnotatingImporter::GetInstructionsInAddressRange(
+    const llvm::object::ELFObjectFileBase *elf_object,
+    AddressRange address_range, uint64_t offset) {
   llvm::StringRef binary_buf = elf_object->getData();
+  auto [range_begin, range_end] = address_range;
 
   llvm::ArrayRef<uint8_t> machine_code(
       reinterpret_cast<const uint8_t *>(
@@ -178,6 +174,28 @@ AnnotatingImporter::GetELFSlice(
     return instructions.status();
   }
   return instructions;
+}
+
+absl::StatusOr<DisassembledInstruction>
+AnnotatingImporter::GetInstructionAtAddress(
+    const llvm::object::ELFObjectFileBase *elf_object, uint64_t address,
+    uint64_t offset) {
+  llvm::StringRef binary_buf = elf_object->getData();
+
+  constexpr int kMaxInstructionSize = 15;
+  llvm::ArrayRef<uint8_t> machine_code(
+      reinterpret_cast<const uint8_t *>(
+          binary_buf
+              .slice(address + offset, address + offset + kMaxInstructionSize)
+              .data()),
+      kMaxInstructionSize);
+  absl::StatusOr<DisassembledInstruction> instruction =
+      importer_.SingleDisassembledInstructionFromMachineCode(machine_code,
+                                                             address);
+  if (!instruction.ok()) {
+    return instruction.status();
+  }
+  return instruction;
 }
 
 absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
@@ -226,8 +244,8 @@ AnnotatingImporter::GetBlocksFromELF(
         if (begin_idx == end_idx) {
           continue;  // Skip any empty basic blocks.
         }
-        const auto &basic_block =
-            GetELFSlice(elf_object, begin_idx, end_idx, main_header->p_vaddr);
+        const auto &basic_block = GetInstructionsInAddressRange(
+            elf_object, AddressRange(begin_idx, end_idx), main_header->p_vaddr);
         if (!basic_block.ok()) {
           return basic_block.status();
         }
@@ -249,18 +267,18 @@ AnnotatingImporter::GetSamples(
   // Extract event type information,
   const int num_sample_types = perf_data->event_types_size();
   std::vector<std::string> sample_types(num_sample_types);
-  std::unordered_map<int, int> event_code_to_idx;
+  std::unordered_map<uint64_t, int> event_code_to_idx;
   for (int sample_type_idx = 0; sample_type_idx < num_sample_types;
        ++sample_type_idx) {
     const auto &event_type = perf_data->event_types()[sample_type_idx];
     sample_types[sample_type_idx] = event_type.name();
     event_code_to_idx[event_type.id()] = sample_type_idx;
   }
-  std::unordered_map<int, int> event_id_to_code;
+  std::unordered_map<uint64_t, uint64_t> event_id_to_code;
   for (const auto &event_type : perf_data->file_attrs()) {
     // Mask out bits identifying the PMU and not the event.
-    int event_code = event_type.attr().config() & 0xffff;
-    for (int event_id : event_type.ids()) {
+    uint64_t event_code = event_type.attr().config() & 0xffff;
+    for (uint64_t event_id : event_type.ids()) {
       event_id_to_code[event_id] = event_code;
     }
   }
@@ -304,12 +322,12 @@ AnnotatingImporter::GetSamples(
   return make_pair(sample_types, samples);
 }
 
-absl::StatusOr<std::vector<
-    std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
+absl::StatusOr<std::vector<BasicBlockWithThroughputListProto>>
 AnnotatingImporter::GetLBRBlocksWithLatency(
     const llvm::object::ELFObjectFileBase *elf_object,
     const quipper::PerfDataProto *perf_data,
-    const quipper::PerfDataProto_MMapEvent *mapping) {
+    const quipper::PerfDataProto_MMapEvent *mapping,
+    const std::string_view source_name) {
   // TODO(vbshah): Refactor this and other parameters as function arguments.
   constexpr int kMaxBlockSizeBytes = 65536;
 
@@ -337,12 +355,11 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
     return main_header.status();
   }
 
-  std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>
-      blocks;
-  std::unordered_map<std::pair<uint64_t, uint64_t>, int,
-                     absl::Hash<std::pair<uint64_t, uint64_t>>>
-      index_map;
+  struct BlockDesc {
+    AddressRange address_range;
+    uint32_t latency;
+  };
+  std::vector<std::vector<BlockDesc>> trace_descs;
   for (const auto &event : perf_data->events()) {
     if (!event.has_sample_event() ||
         !event.sample_event().branch_stack_size()) {
@@ -355,7 +372,10 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
       continue;
     }
 
+    // Extract blocks and their latencies from last branch records.
     const auto &branch_stack = event.sample_event().branch_stack();
+    std::vector<BlockDesc> branch_stack_blocks(branch_stack.size() - 1);
+    bool is_valid = true;
     for (int branch_idx = branch_stack.size() - 2; branch_idx >= 0;
          --branch_idx) {
       const auto &branch_entry = branch_stack[branch_idx + 1];
@@ -363,44 +383,69 @@ AnnotatingImporter::GetLBRBlocksWithLatency(
 
       const uint64_t block_begin = branch_entry.to_ip();
       const uint64_t block_end = next_branch_entry.from_ip();
-
-      // Simple validity checks: the block must start before it ends and cannot
-      // be larger than some threshold.
-      if (block_begin >= block_end) {
-        continue;
-      }
-      if (block_end - block_begin > kMaxBlockSizeBytes) {
-        continue;
-      }
-
-      // Remove blocks not belonging to the binary we are importing from.
-      if (block_begin < mmap_begin_addr || mmap_end_addr < block_end) {
-        continue;
+      // Simple validity checks: the block must start before it ends, cannot
+      // be larger than some threshold, and must belong to the binary we are
+      // importing from.
+      if (block_begin >= block_end ||
+          block_end - block_begin > kMaxBlockSizeBytes ||
+          block_begin < mmap_begin_addr || mmap_end_addr < block_end) {
+        is_valid = false;
+        break;
       }
 
-      uint32_t block_latency = next_branch_entry.cycles();
-
-      std::pair<uint64_t, uint64_t> block_range = {block_begin, block_end};
-      if (index_map.count(block_range)) {
-        blocks[index_map[block_range]].second.push_back(block_latency);
-      } else {
-        index_map[block_range] = blocks.size();
-        const auto block =
-            GetELFSlice(elf_object, block_begin, block_end, mapping->pgoff());
-        if (!block.ok()) {
-          // TODO(vbshah): Make the importer so something better than simply
-          // exiting upon encountering something unexpected.
-          return block.status();
-        }
-        blocks.emplace_back(*block, std::vector<uint32_t>{block_latency});
-      }
+      branch_stack_blocks[branch_idx] = {
+          .address_range = {block_begin, block_end},
+          .latency = next_branch_entry.cycles(),
+      };
+    }
+    if (is_valid) {
+      trace_descs.push_back(std::move(branch_stack_blocks));
     }
   }
 
-  return blocks;
+  std::vector<BasicBlockWithThroughputListProto> trace_protos;
+  trace_protos.reserve(trace_descs.size());
+  for (const std::vector<BlockDesc> &trace_desc : trace_descs) {
+    // Resolve the contents of each block in the trace.
+    BasicBlockWithThroughputListProto trace_proto;
+    for (const BlockDesc &block : trace_desc) {
+      const auto [block_begin, block_end] = block.address_range;
+      // TODO(vbshah): Consider caching the result of this call.
+      absl::StatusOr<std::vector<DisassembledInstruction>> instrs =
+          GetInstructionsInAddressRange(elf_object, block.address_range,
+                                        mapping->pgoff());
+      if (!instrs.ok()) {
+        // TODO(vbshah): Make the importer so something better than simply
+        // exiting upon encountering something unexpected.
+        return instrs.status();
+      }
+
+      // TODO(vbshah): Consider dropping the added tail branch instruction from
+      // the last block of each trace.
+      const absl::StatusOr<DisassembledInstruction> tail_instr =
+          GetInstructionAtAddress(elf_object, block_end, mapping->pgoff());
+      if (!tail_instr.ok()) {
+        return tail_instr.status();
+      }
+      instrs->push_back(*std::move(tail_instr));
+
+      BasicBlockWithThroughputProto &block_with_throughput =
+          *trace_proto.add_basic_blocks();
+      *block_with_throughput.mutable_basic_block() =
+          importer_.BasicBlockProtoFromInstructions(*instrs);
+      ThroughputWithSourceProto &throughput =
+          *block_with_throughput.add_inverse_throughputs();
+      throughput.set_source(source_name);
+      throughput.add_inverse_throughput_cycles(block.latency);
+    }
+
+    trace_protos.push_back(std::move(trace_proto));
+  }
+
+  return trace_protos;
 }
 
-absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
+absl::StatusOr<std::vector<BasicBlockWithThroughputListProto>>
 AnnotatingImporter::GetAnnotatedBasicBlockProtos(
     std::string_view elf_file_name, std::string_view perf_data_file_name,
     std::string_view source_name) {
@@ -428,10 +473,9 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   }
 
   // Get the raw basic blocks, perf samples, and LBR data for annotation.
-  absl::StatusOr<std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
-      basic_blocks =
-          GetLBRBlocksWithLatency(*elf_object, *perf_data, *main_mapping);
+  absl::StatusOr<std::vector<BasicBlockWithThroughputListProto>> basic_blocks =
+      GetLBRBlocksWithLatency(*elf_object, *perf_data, *main_mapping,
+                              source_name);
   if (!basic_blocks.ok()) {
     return basic_blocks.status();
   }
@@ -441,51 +485,37 @@ AnnotatingImporter::GetAnnotatedBasicBlockProtos(
   }
   const auto &[sample_types, samples] = sample_types_and_samples.value();
 
-  // Convert the raw basic blocks into protos and annotate them using samples.
-  std::vector<BasicBlockWithThroughputProto> basic_block_protos(
-      basic_blocks->size());
-  for (int block_idx = 0; block_idx < basic_blocks->size(); ++block_idx) {
-    const auto &[instructions, latency] = (*basic_blocks)[block_idx];
+  // Annotate the blocks using samples.
+  for (BasicBlockWithThroughputListProto &trace : *basic_blocks) {
+    for (BasicBlockWithThroughputProto &block_with_throughput :
+         *trace.mutable_basic_blocks()) {
+      BasicBlockProto &block = *block_with_throughput.mutable_basic_block();
 
-    // Create the un-annotated basic block proto.
-    BasicBlockWithThroughputProto &basic_block_proto =
-        basic_block_protos[block_idx];
-    *basic_block_proto.mutable_basic_block() =
-        importer_.BasicBlockProtoFromInstructions(instructions);
+      // Loop over and annotate individual instructions.
+      for (int instruction_idx = 0;
+           instruction_idx < block.machine_instructions_size();
+           ++instruction_idx) {
+        uint64_t instruction_addr =
+            block.machine_instructions()[instruction_idx].address();
+        if (!samples.count(instruction_addr)) continue;
 
-    // Loop over and annotate individual instructions.
-    for (int instruction_idx = 0; instruction_idx < instructions.size();
-         ++instruction_idx) {
-      uint64_t instruction_addr = basic_block_proto.basic_block()
-                                      .machine_instructions()[instruction_idx]
-                                      .address();
-      if (!samples.count(instruction_addr)) {
-        continue;
-      }
-
-      const std::vector<int> &annotations = samples.at(instruction_addr);
-      auto &instruction_proto = basic_block_proto.mutable_basic_block()
-                                    ->mutable_canonicalized_instructions()
-                                    ->at(instruction_idx);
-      for (int annotation_idx = 0; annotation_idx < annotations.size();
-           ++annotation_idx) {
-        if (annotations[annotation_idx]) {
-          *instruction_proto.add_instruction_annotations() =
-              ProtoFromAnnotation(Annotation(
-                  /* name = */ sample_types.at(annotation_idx),
-                  /* value = */ annotations.at(annotation_idx)));
+        const std::vector<int> &annotations = samples.at(instruction_addr);
+        auto &instruction_proto =
+            block.mutable_canonicalized_instructions()->at(instruction_idx);
+        for (int annotation_idx = 0; annotation_idx < annotations.size();
+             ++annotation_idx) {
+          if (annotations[annotation_idx]) {
+            *instruction_proto.add_instruction_annotations() =
+                ProtoFromAnnotation(Annotation(
+                    /* name = */ sample_types.at(annotation_idx),
+                    /* value = */ annotations.at(annotation_idx)));
+          }
         }
       }
     }
-
-    ThroughputWithSourceProto &throughput =
-        *basic_block_protos[block_idx].add_inverse_throughputs();
-    throughput.set_source(source_name);
-    throughput.add_inverse_throughput_cycles(
-        std::accumulate(latency.begin(), latency.end(), 0.0) / latency.size());
   }
 
-  return basic_block_protos;
+  return basic_blocks;
 }
 
 }  // namespace gematria
