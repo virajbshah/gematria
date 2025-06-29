@@ -45,6 +45,11 @@ class BHiveImporter {
   // Does not take ownership of the canonicalizer.
   explicit BHiveImporter(const Canonicalizer* canonicalizer);
 
+  // Creates a `MachineInstructionProto` from the given
+  // `DisassembledInstruction`.
+  MachineInstructionProto MachineInstructionProtoFromInstruction(
+      const DisassembledInstruction& instruction);
+
   // Creates a basic block from the given instructions. Uses `base_address` as
   // the address of the first instruction; the addresses of following
   // instructions are derived from `base_address` and the sizes of the
@@ -52,6 +57,11 @@ class BHiveImporter {
   BasicBlockProto BasicBlockProtoFromInstructions(
       llvm::ArrayRef<DisassembledInstruction> disassembled_instructions,
       uint64_t base_address = 0);
+
+  // Disassembles a single instruction from the given address.
+  absl::StatusOr<DisassembledInstruction>
+  SingleDisassembledInstructionFromMachineCode(
+      llvm::ArrayRef<uint8_t> machine_code, uint64_t base_address = 0);
 
   // Converts machine code in the form of an array of bytes into gematria
   // DisassembledInstructions that can more easily be used by downstream
