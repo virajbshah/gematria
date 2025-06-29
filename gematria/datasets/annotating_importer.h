@@ -44,16 +44,19 @@ namespace gematria {
 
 // Importer for annotated basic blocks.
 class AnnotatingImporter {
+  using AddressRange = std::pair<uint64_t, uint64_t>;
+
  public:
   // Creates a new annotation collector from a given canonicalizer. The
   // canonicalizer must be for the architecture/microarchitecture of the data
   // set. Does not take ownership of the canonicalizer.
-  explicit AnnotatingImporter(const Canonicalizer* canonicalizer);
+  explicit AnnotatingImporter(const Canonicalizer* canonicalizer)
+      : importer_(canonicalizer) {};
 
   // Reads an ELF object along with a corresponding `perf.data`-like file and
   // returns a vector of annotated `BasicBlockProto`s consisting of basic blocks
   // from the ELF object annotated using samples from the `perf.data`-like file.
-  absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
+  absl::StatusOr<std::vector<BasicBlockWithThroughputListProto>>
   GetAnnotatedBasicBlockProtos(std::string_view elf_file_name,
                                std::string_view perf_data_file_name,
                                std::string_view source_name);
@@ -91,9 +94,16 @@ class AnnotatingImporter {
 
   // Disassembles and returns instructions between two addresses in an ELF
   // object.
-  absl::StatusOr<std::vector<DisassembledInstruction>> GetELFSlice(
-      const llvm::object::ELFObjectFileBase* elf_object, uint64_t range_begin,
-      uint64_t range_end, uint64_t offset);
+  absl::StatusOr<std::vector<DisassembledInstruction>>
+  GetInstructionsInAddressRange(
+      const llvm::object::ELFObjectFileBase* elf_object,
+      AddressRange address_range, uint64_t offset);
+
+  // Disassembles and returns a single instruction at a given address from an
+  // ELF object.
+  absl::StatusOr<DisassembledInstruction> GetInstructionAtAddress(
+      const llvm::object::ELFObjectFileBase* elf_object, uint64_t address,
+      uint64_t offset);
 
   // Extracts basic blocks from an ELF object, and returns them as tuple
   // consisting the begin address, end address, and a vector of
@@ -117,11 +127,11 @@ class AnnotatingImporter {
   // Extracts start and end pairs belonging to the given mapping, as well as
   // their latencies in cycles, of sequences of straight-run code from
   // LBR branch stacks (pseudo-basic blocks).
-  absl::StatusOr<std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
+  absl::StatusOr<std::vector<BasicBlockWithThroughputListProto>>
   GetLBRBlocksWithLatency(const llvm::object::ELFObjectFileBase* elf_object,
                           const quipper::PerfDataProto* perf_data,
-                          const quipper::PerfDataProto_MMapEvent* mapping);
+                          const quipper::PerfDataProto_MMapEvent* mapping,
+                          std::string_view source_name);
 
   BHiveImporter importer_;
 
