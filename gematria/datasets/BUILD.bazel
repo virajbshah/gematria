@@ -62,6 +62,7 @@ cc_library(
         "//gematria/llvm:canonicalizer",
         "//gematria/llvm:disassembler",
         "//gematria/llvm:llvm_to_absl",
+        "//gematria/proto:basic_block_cc_proto",
         "//gematria/proto:throughput_cc_proto",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",

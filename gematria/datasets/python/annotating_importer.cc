@@ -14,16 +14,8 @@
 
 #include "gematria/datasets/annotating_importer.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <tuple>
-#include <vector>
-
 #include "gematria/llvm/canonicalizer.h"
-#include "llvm/Support/Error.h"
+#include "pybind11/attr.h"
 #include "pybind11/cast.h"
 #include "pybind11/detail/common.h"
 #include "pybind11/pybind11.h"
