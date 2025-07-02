@@ -82,18 +82,30 @@ def main(argv: Sequence[str]) -> None:
   # LLVM triple. As of 2024-08, this is OK, because we support only x86-64
   # anyway.
   canonicalizer_obj = canonicalizer.Canonicalizer.x86_64(llvm)
-  importer = annotating_importer.AnnotatingImporter(canonicalizer_obj)
+  importer = annotating_importer.LBRImporter.create(
+      _INPUT_ELF_FILE.value, _INPUT_PERF_FILE.value, canonicalizer_obj
+  )
 
-  protos = importer.get_annotated_basic_block_protos(
-      _INPUT_ELF_FILE.value,
-      _INPUT_PERF_FILE.value,
+  proto_generator = importer.get_lbr_trace_proto_generator(
       _SOURCE_NAME.value,
   )
 
   with tf.io.TFRecordWriter(_OUTPUT_TFRECORD_FILE.value) as writer:
-    for proto in protos:
+    num_protos_written = 0
+    while True:
+      try:
+        proto = proto_generator()
+      except status.StatusNotOk as e:
+        if e.status.code() == status.StatusCode.OUT_OF_RANGE:
+          print(f'Wrote {num_protos_written} proto(s).')
+          break
+        else:
+          raise e
+
       writer.write(proto.SerializeToString())
-  print(f'Wrote {len(protos)} trace(s).')
+      num_protos_written += 1
+      if num_protos_written % 1000 == 0:
+        print(f'Wrote {num_protos_written} proto(s).')
 
 
 if __name__ == '__main__':
