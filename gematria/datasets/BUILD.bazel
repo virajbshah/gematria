@@ -61,6 +61,7 @@ cc_library(
         "//gematria/basic_block:basic_block_protos",
         "//gematria/llvm:canonicalizer",
         "//gematria/llvm:disassembler",
+        "//gematria/llvm:llvm_architecture_support",
         "//gematria/llvm:llvm_to_absl",
         "//gematria/proto:basic_block_cc_proto",
         "//gematria/proto:throughput_cc_proto",
