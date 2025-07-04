@@ -97,15 +97,16 @@ def main(argv: Sequence[str]) -> None:
         proto = proto_generator()
       except status.StatusNotOk as e:
         if e.status.code() == status.StatusCode.OUT_OF_RANGE:
-          print(f'Wrote {num_protos_written} proto(s).')
+          logging.info(f'Wrote {num_protos_written} proto(s).')
           break
         else:
           raise e
 
       writer.write(proto.SerializeToString())
       num_protos_written += 1
-      if num_protos_written % 1000 == 0:
-        print(f'Wrote {num_protos_written} proto(s).')
+      logging.log_every_n(
+          logging.INFO, f'Wrote {num_protos_written} proto(s).', 100
+      )
 
 
 if __name__ == '__main__':
