@@ -393,52 +393,59 @@ LBRImporter::GetLBRTraceProtos(const std::string_view source_name) {
        lbr_trace_data_generator =
            *std::move(lbr_trace_data_generator)]() mutable
       -> absl::StatusOr<BasicBlockWithThroughputListProto> {
-    const auto trace_data = lbr_trace_data_generator();
-    if (absl::IsOutOfRange(trace_data.status())) {
-      return absl::OutOfRangeError(
-          "Iteration complete, all trace protos have been returned.");
-    }
-    if (!trace_data.ok()) {
-      return trace_data.status();
-    }
-
-    // Resolve the contents of each block in the trace.
-    BasicBlockWithThroughputListProto trace_proto;
-    for (const LBRBlockData &block : *trace_data) {
-      if (cache.find(block.address_range) == cache.cend()) {
-        const auto [block_begin, block_end] = block.address_range;
-        absl::StatusOr<std::vector<DisassembledInstruction>> instrs =
-            GetInstructionsInAddressRange(block.address_range,
-                                          mapping->pgoff());
-        if (!instrs.ok()) {
-          // TODO(vbshah): Make the importer so something better than simply
-          // exiting upon encountering something unexpected.
-          return instrs.status();
-        }
-
-        // TODO(vbshah): Consider dropping the added tail branch instruction
-        // from the last block of each trace.
-        const absl::StatusOr<DisassembledInstruction> tail_instr =
-            GetInstructionAtAddress(block_end, mapping->pgoff());
-        if (!tail_instr.ok()) {
-          return tail_instr.status();
-        }
-        instrs->push_back(*std::move(tail_instr));
-
-        cache[block.address_range] =
-            bhive_importer_.BasicBlockProtoFromInstructions(*instrs);
+    while (true) {
+      const auto trace_data = lbr_trace_data_generator();
+      if (absl::IsOutOfRange(trace_data.status())) {
+        break;
+      }
+      if (!trace_data.ok()) {
+        return trace_data.status();
       }
 
-      BasicBlockWithThroughputProto &block_with_throughput =
-          *trace_proto.add_basic_blocks();
-      *block_with_throughput.mutable_basic_block() = cache[block.address_range];
-      ThroughputWithSourceProto &throughput =
-          *block_with_throughput.add_inverse_throughputs();
-      throughput.set_source(source_name);
-      throughput.add_inverse_throughput_cycles(block.latency);
-    }
+      // Resolve the contents of each block in the trace.
+      BasicBlockWithThroughputListProto trace_proto;
+      for (const LBRBlockData &block : *trace_data) {
+        if (cache.find(block.address_range) == cache.cend()) {
+          const auto [block_begin, block_end] = block.address_range;
+          absl::StatusOr<std::vector<DisassembledInstruction>> instrs =
+              GetInstructionsInAddressRange(block.address_range,
+                                            mapping->pgoff());
+          if (!instrs.ok()) {
+            // TODO(vbshah): Make the importer so something better than simply
+            // exiting upon encountering something unexpected.
+            return instrs.status();
+          }
 
-    return trace_proto;
+          // TODO(vbshah): Consider dropping the added tail branch instruction
+          // from the last block of each trace.
+          const absl::StatusOr<DisassembledInstruction> tail_instr =
+              GetInstructionAtAddress(block_end, mapping->pgoff());
+          if (!tail_instr.ok()) {
+            return tail_instr.status();
+          }
+          instrs->push_back(*std::move(tail_instr));
+
+          cache[block.address_range] =
+              bhive_importer_.BasicBlockProtoFromInstructions(*instrs);
+        }
+        if (cache[block.address_range].machine_instructions_size() == 0) {
+          continue;
+        }
+
+        BasicBlockWithThroughputProto &block_with_throughput =
+            *trace_proto.add_basic_blocks();
+        *block_with_throughput.mutable_basic_block() =
+            cache[block.address_range];
+        ThroughputWithSourceProto &throughput =
+            *block_with_throughput.add_inverse_throughputs();
+        throughput.set_source(source_name);
+        throughput.add_inverse_throughput_cycles(block.latency);
+      }
+
+      return trace_proto;
+    }
+    return absl::OutOfRangeError(
+        "Iteration complete, all trace protos have been returned.");
   };
 
   return trace_proto_generator;
