@@ -1288,7 +1288,7 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
         with tf.profiler.experimental.Trace(
             'train', step_num=epoch_index, _r=1
         ):
-          tf.summary.experimental.set_step(epoch_index)
+          tf.summary.experimental.set_step(self._global_step)
           stats = run_one_epoch()
           logging.info('Training: %s', stats)
           if not hooks:
