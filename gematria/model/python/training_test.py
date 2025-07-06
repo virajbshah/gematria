@@ -390,7 +390,7 @@ class BatchesTest(
     blocks = self._get_blocks(with_throughput)
     get_num_instructions = self._get_num_instructions_callback(with_throughput)
     batches = tuple(
-        training.batches(blocks, get_num_instructions, max_blocks_in_batch=3)
+        training.batches(blocks, get_num_instructions, max_traces_in_batch=3)
     )
     expected_batches = (blocks[0:3], blocks[3:6], blocks[6:9], [blocks[9]])
     self.assertSequenceEqual(batches, expected_batches)
@@ -427,7 +427,7 @@ class BatchesTest(
         training.batches(
             blocks,
             get_num_instructions,
-            max_blocks_in_batch=2,
+            max_traces_in_batch=2,
             max_instructions_in_batch=8,
         )
     )

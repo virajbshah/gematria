@@ -223,6 +223,13 @@ def get_num_instructions_in_block(block: basic_block.BasicBlock) -> int:
   return len(block.instructions)
 
 
+def get_num_instructions_in_trace(
+    trace: Sequence[basic_block.BasicBlock],
+) -> int:
+  """Returns the number of instructions in a trace."""
+  return sum(get_num_instructions_in_block(block) for block in trace)
+
+
 def get_num_instructions_in_block_with_throughput(
     block: throughput.BasicBlockWithThroughput,
 ) -> int:
@@ -230,15 +237,24 @@ def get_num_instructions_in_block_with_throughput(
   return len(block.block.instructions)
 
 
+def get_num_instructions_in_trace_with_throughput(
+    trace: Sequence[throughput.BasicBlockWithThroughput],
+) -> int:
+  """Returns the number of instructions in a basic block with throughput."""
+  return sum(
+      get_num_instructions_in_block_with_throughput(block) for block in trace
+  )
+
+
 def batches(
-    blocks: Iterable[T],
+    traces: Iterable[T],
     get_num_instructions: Callable[[T], int],
-    max_blocks_in_batch: Optional[int] = None,
+    max_traces_in_batch: Optional[int] = None,
     max_instructions_in_batch: Optional[int] = None,
 ) -> Iterable[Sequence[T]]:
-  """Splits 'blocks' into a sequence of batches respecting the size limits.
+  """Splits 'traces' into a sequence of batches respecting the size limits.
 
-  When max_blocks_in_batch is specified, each batch has at most this number of
+  When max_traces_in_batch is specified, each batch has at most this number of
   basic blocks in it. When max_instructions_in_batch is specified, each batch
   has at most this number of instructions in it across all basic blocks; blocks
   that have more instructions than max_instructions_in_batch are skipped.
@@ -249,55 +265,54 @@ def batches(
   For example, suppose that block(n) returns a basic block with n instructions,
   and blocks = [block(n) for n in (1, 3, 5, 1, 15, 12)].
   Then
-    Batches(blocks, max_blocks_in_batch=3, max_instructions_in_batch = 12)
+    Batches(blocks, max_traces_in_batch=3, max_instructions_in_batch = 12)
   returns [[blocks[0:3], [blocks[3]], [blocks[5]]].
 
   Args:
-    blocks: The basic block collection that is split into batches.
+    traces: The basic block trace collection that is split into batches.
     get_num_instructions: A callback that returns the number of instructions in
       each basic block.
-    max_blocks_in_batch: The number of basic blocks to include in a single
-      batch. When not specified, the number of basic blocks per batch is not
-      limited.
+    max_traces_in_batch: The number of traces to include in a single batch.
+      When not specified, the number of traces per batch is not limited.
     max_instructions_in_batch: The maximal number of instructions in a single
       batch. When not specified, the number of instructions per batch is not
       limited.
 
   Yields:
-    The basic blocks from the input sequence, in the original order, split into
+    The traces from the input sequence, in the original order, split into
     batches following the specified limits.
   """
   max_instructions_in_batch = max_instructions_in_batch or math.inf
-  max_blocks_in_batch = max_blocks_in_batch or math.inf
+  max_traces_in_batch = max_traces_in_batch or math.inf
 
   current_batch = []
   num_instructions_in_batch = 0
-  for block in blocks:
-    num_instructions_in_block = get_num_instructions(block)
-    if num_instructions_in_block > max_instructions_in_batch:
+  for trace in traces:
+    num_instructions_in_trace = get_num_instructions(trace)
+    if num_instructions_in_trace > max_instructions_in_batch:
       # This block alone has more instruction than we allow in a single batch.
       # We skip this basic block.
       logging.warn(
           (
-              'Single basic block has more instructions (%d) than the '
-              'allowed limit per batch (%d). Skipping the basic block'
+              'Single basic block trace has more instructions (%d) than the '
+              'allowed limit per batch (%d). Skipping the trace'
           ),
-          num_instructions_in_block,
+          num_instructions_in_trace,
           max_instructions_in_batch,
       )
       continue
     new_instructions_in_batch = (
-        num_instructions_in_batch + num_instructions_in_block
+        num_instructions_in_batch + num_instructions_in_trace
     )
     if (
         new_instructions_in_batch > max_instructions_in_batch
-        or len(current_batch) == max_blocks_in_batch
+        or len(current_batch) == max_traces_in_batch
     ):
       yield current_batch
       current_batch = []
       num_instructions_in_batch = 0
-    current_batch.append(block)
-    num_instructions_in_batch += num_instructions_in_block
+    current_batch.append(trace)
+    num_instructions_in_batch += num_instructions_in_trace
   if current_batch:
     yield current_batch
 

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <ostream>
@@ -34,6 +35,8 @@ namespace {
 
 constexpr BasicBlockGraphBuilder::NodeIndex kInvalidNode(-1);
 constexpr BasicBlockGraphBuilder::TokenIndex kInvalidTokenIndex(-1);
+constexpr double kDefaultInstructionAnnotation(-1);
+constexpr uint64_t kUnknownAddress(0);
 
 std::unordered_map<std::string, BasicBlockGraphBuilder::TokenIndex> MakeIndex(
     std::vector<std::string> items) {
@@ -93,6 +96,7 @@ std::ostream& operator<<(std::ostream& os, EdgeType edge_type) {
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressSegmentRegister);
     EXEGESIS_ENUM_CASE(os, EdgeType::kAddressDisplacement);
     EXEGESIS_ENUM_CASE(os, EdgeType::kReverseStructuralDependency);
+    EXEGESIS_ENUM_CASE(os, EdgeType::kTakenBranch);
     EXEGESIS_ENUM_CASE(os, EdgeType::kInstructionPrefix);
   }
   return os;
@@ -103,10 +107,10 @@ std::ostream& operator<<(std::ostream& os, EdgeType edge_type) {
 BasicBlockGraphBuilder::AddBasicBlockTransaction::AddBasicBlockTransaction(
     BasicBlockGraphBuilder* graph_builder)
     : graph_builder_(*graph_builder),
-      prev_num_nodes_per_block_size_(
-          graph_builder->num_nodes_per_block_.size()),
-      prev_num_edges_per_block_size_(
-          graph_builder->num_edges_per_block_.size()),
+      prev_num_nodes_per_trace_size_(
+          graph_builder->num_nodes_per_trace_.size()),
+      prev_num_edges_per_trace_size_(
+          graph_builder->num_edges_per_trace_.size()),
       prev_node_types_size_(graph_builder->node_types_.size()),
       prev_node_features_size_(graph_builder->node_features_.size()),
       prev_edge_senders_size_(graph_builder->edge_senders_.size()),
@@ -133,8 +137,8 @@ void BasicBlockGraphBuilder::AddBasicBlockTransaction::Commit() {
 
 void BasicBlockGraphBuilder::AddBasicBlockTransaction::Rollback() {
   assert(!is_committed_);
-  GEMATRIA_CHECK_AND_RESIZE(num_nodes_per_block_);
-  GEMATRIA_CHECK_AND_RESIZE(num_edges_per_block_);
+  GEMATRIA_CHECK_AND_RESIZE(num_nodes_per_trace_);
+  GEMATRIA_CHECK_AND_RESIZE(num_edges_per_trace_);
   GEMATRIA_CHECK_AND_RESIZE(node_types_);
   GEMATRIA_CHECK_AND_RESIZE(node_features_);
   GEMATRIA_CHECK_AND_RESIZE(edge_senders_);
@@ -172,7 +176,7 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
               : FindTokenOrDie(
                     node_tokens_,
                     out_of_vocabulary_behavior.replacement_token())) {
-  instruction_annotations_ = std::vector<std::vector<float>>();
+  instruction_annotations_ = std::vector<std::vector<double>>();
 
   // Make sure annotations are stored in a stable order as long the same
   // annotation names are used.
@@ -183,88 +187,144 @@ BasicBlockGraphBuilder::BasicBlockGraphBuilder(
 
   // Store row indices corresponding to specific annotation names.
   int annotation_idx = 0;
-  for (auto& annotation_name : annotation_names_) {
+  for (const std::string& annotation_name : annotation_names_) {
     annotation_name_to_idx_[annotation_name] = annotation_idx;
     ++annotation_idx;
   }
 }
 
-bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
-    const std::vector<Instruction>& instructions) {
-  if (instructions.empty()) return false;
+BasicBlockGraphBuilder::AddInstructionState
+BasicBlockGraphBuilder::AddInstruction(
+    const Instruction& instruction, const AddInstructionState& previous_state) {
+  // Add the instruction node.
+  const NodeIndex instruction_node =
+      AddNode(NodeType::kInstruction, instruction.mnemonic);
+  if (instruction_node == kInvalidNode) {
+    return AddInstructionState{.instruction_node = kInvalidNode};
+  }
+  AddInstructionState state = {instruction_node};
+
+  // Store instruction annotations.
+  AddInstructionAnnotations(instruction);
+
+  // Add nodes for prefixes of the instruction.
+  for (const std::string& prefix : instruction.prefixes) {
+    const NodeIndex prefix_node = AddNode(NodeType::kPrefix, prefix);
+    if (prefix_node == kInvalidNode) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
+    AddEdge(EdgeType::kInstructionPrefix, prefix_node, instruction_node);
+  }
+
+  // Add a structural dependency or taken branch edge from the previous
+  // instruction, depending on the previous `AddInstruction` state.
+  if (previous_state.instruction_node >= 0) {
+    if (previous_state.instruction_is_unconditional_branch ||
+        (previous_state.instruction_is_conditional_branch &&
+         instruction.address != previous_state.expected_instruction_address)) {
+      AddEdge(EdgeType::kTakenBranch, previous_state.instruction_node,
+              instruction_node);
+    } else {
+      AddEdge(EdgeType::kStructuralDependency, previous_state.instruction_node,
+              instruction_node);
+    }
+  }
+
+  // Add edges for input operands. And nodes too, if necessary.
+  for (const InstructionOperand& operand : instruction.input_operands) {
+    if (!AddInputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
+  }
+  for (const InstructionOperand& operand :
+       instruction.implicit_input_operands) {
+    if (!AddInputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
+  }
+
+  // Add edges and nodes for output operands.
+  for (const InstructionOperand& operand : instruction.output_operands) {
+    if (!AddOutputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
+  }
+  for (const InstructionOperand& operand :
+       instruction.implicit_output_operands) {
+    if (!AddOutputOperand(instruction_node, operand)) {
+      return AddInstructionState{.instruction_node = kInvalidNode};
+    }
+  }
+
+  // Check if the instruction is a taken branch to choose the edge type
+  // connecting it to the next instruction.
+  // TODO(vbshah): Consider using a better way to check for branching
+  // instructions.
+  const std::string_view instruction_mnemonic_start(
+      instruction.llvm_mnemonic.data(), 3);
+  if (instruction.size == 0) {
+    // Do nothing.
+    // NOTE(vbshah): Instruction sizes may be unavailable, and require datasets
+    // to contain `MachineInstructionProto`s which are otherwise not strictly
+    // required at any point. In this case, we cannot create taken branch edges
+    // and skip the logic deciding whether one should be created instead of a
+    // structural dependency edge.
+  } else if (instruction_mnemonic_start == "JCC") {
+    state.instruction_is_conditional_branch = true;
+    state.expected_instruction_address = instruction.address + instruction.size;
+  } else if (instruction_mnemonic_start == "JMP" ||
+             instruction_mnemonic_start == "CALL" ||
+             instruction_mnemonic_start == "RET") {
+    state.instruction_is_unconditional_branch = true;
+  }
+
+  return state;
+}
+
+bool BasicBlockGraphBuilder::AddBasicBlocksFromTrace(
+    const std::vector<BasicBlock>& blocks) {
+  if (blocks.empty()) return false;
   AddBasicBlockTransaction transaction(this);
 
   // Clear the maps that are maintained per basic block.
   register_nodes_.clear();
   alias_group_nodes_.clear();
 
-  const int prev_num_nodes = num_nodes();
-  const int prev_num_edges = num_edges();
+  const int prev_trace_num_nodes = num_nodes();
+  const int prev_trace_num_edges = num_edges();
 
-  NodeIndex previous_instruction_node = kInvalidNode;
-  for (const Instruction& instruction : instructions) {
-    // Add the instruction node.
-    const NodeIndex instruction_node =
-        AddNode(NodeType::kInstruction, instruction.mnemonic);
-    if (instruction_node == kInvalidNode) {
-      return false;
-    }
+  AddInstructionState previous_state = {
+      .instruction_node = kInvalidNode,
+      .expected_instruction_address = kUnknownAddress,
+  };
+  for (const BasicBlock& block : blocks) {
+    if (block.instructions.empty()) return false;
 
-    // Store the annotations for later use (inclusion in embeddings), using -1
-    // as a default value wherever annotations are missing.
-    std::vector<float> row = std::vector<float>(annotation_names_.size(), -1);
-    for (const auto& [name, value] : instruction.instruction_annotations) {
-      const auto annotation_index = annotation_name_to_idx_.find(name);
-      if (annotation_index == annotation_name_to_idx_.end()) continue;
-      row[annotation_index->second] = value;
-    }
-    instruction_annotations_.push_back(row);
+    const int prev_block_num_nodes = num_nodes();
+    const int prev_block_num_edges = num_edges();
 
-    // Add nodes for prefixes of the instruction.
-    for (const std::string& prefix : instruction.prefixes) {
-      const NodeIndex prefix_node = AddNode(NodeType::kPrefix, prefix);
-      if (prefix_node == kInvalidNode) {
+    for (const Instruction& instruction : block.instructions) {
+      AddInstructionState state = AddInstruction(instruction, previous_state);
+      if (state.instruction_node == kInvalidNode) {
         return false;
       }
-      AddEdge(EdgeType::kInstructionPrefix, prefix_node, instruction_node);
+      previous_state = state;
     }
 
-    // Add a structural dependency edge from the previous instruction.
-    if (previous_instruction_node >= 0) {
-      AddEdge(EdgeType::kStructuralDependency, previous_instruction_node,
-              instruction_node);
-    }
-
-    // Add edges for input operands. And nodes too, if necessary.
-    for (const InstructionOperand& operand : instruction.input_operands) {
-      if (!AddInputOperand(instruction_node, operand)) return false;
-    }
-    for (const InstructionOperand& operand :
-         instruction.implicit_input_operands) {
-      if (!AddInputOperand(instruction_node, operand)) return false;
-    }
-
-    // Add edges and nodes for output operands.
-    for (const InstructionOperand& operand : instruction.output_operands) {
-      if (!AddOutputOperand(instruction_node, operand)) return false;
-    }
-    for (const InstructionOperand& operand :
-         instruction.implicit_output_operands) {
-      if (!AddOutputOperand(instruction_node, operand)) return false;
-    }
-
-    previous_instruction_node = instruction_node;
+    // Record the number of nodes and edges created for this block.
+    num_nodes_per_block_.push_back(num_nodes() - prev_block_num_nodes);
+    num_edges_per_block_.push_back(num_edges() - prev_block_num_edges);
   }
 
   global_features_.emplace_back(num_node_tokens(), 0);
   std::vector<int>& global_features = global_features_.back();
-  for (NodeIndex i = prev_num_nodes; i < node_features_.size(); ++i) {
+  for (NodeIndex i = prev_trace_num_nodes; i < node_features_.size(); ++i) {
     ++global_features[node_features_[i]];
   }
 
   // Record the number of nodes and edges created for this graph.
-  num_nodes_per_block_.push_back(num_nodes() - prev_num_nodes);
-  num_edges_per_block_.push_back(num_edges() - prev_num_edges);
+  num_nodes_per_trace_.push_back(num_nodes() - prev_trace_num_nodes);
+  num_edges_per_trace_.push_back(num_edges() - prev_trace_num_edges);
 
   transaction.Commit();
   return true;
@@ -273,6 +333,8 @@ bool BasicBlockGraphBuilder::AddBasicBlockFromInstructions(
 void BasicBlockGraphBuilder::Reset() {
   num_nodes_per_block_.clear();
   num_edges_per_block_.clear();
+  num_nodes_per_trace_.clear();
+  num_edges_per_trace_.clear();
 
   node_types_.clear();
   node_features_.clear();
@@ -441,6 +503,20 @@ void BasicBlockGraphBuilder::AddEdge(EdgeType edge_type, NodeIndex sender,
   edge_types_.push_back(edge_type);
 }
 
+void BasicBlockGraphBuilder::AddInstructionAnnotations(
+    const Instruction& instruction) {
+  // Store the annotations for later use, using `kDefaultInstructionAnnotation`
+  // as a default value wherever annotations are missing.
+  std::vector<double> row = std::vector<double>(annotation_names_.size(),
+                                                kDefaultInstructionAnnotation);
+  for (const auto& [name, value] : instruction.instruction_annotations) {
+    const auto annotation_index = annotation_name_to_idx_.find(name);
+    if (annotation_index == annotation_name_to_idx_.end()) continue;
+    row[annotation_index->second] = value;
+  }
+  instruction_annotations_.push_back(row);
+}
+
 std::vector<int> BasicBlockGraphBuilder::EdgeFeatures() const {
   std::vector<int> edge_features(num_edges());
   for (int i = 0; i < num_edges(); ++i) {
@@ -466,13 +542,13 @@ std::vector<int> BasicBlockGraphBuilder::DeltaBlockIndex() const {
   int block_end = 0;
   for (int node = 0; node < node_types_.size(); ++node) {
     if (node_types_[node] != NodeType::kInstruction) continue;
-    while (node >= block_end && block < num_graphs()) {
+    while (node >= block_end && block < num_blocks()) {
       block++;
       block_end += num_nodes_per_block_[block];
     }
     delta_block_index.push_back(block);
   }
-  assert(block == num_graphs() - 1);
+  assert(block == num_blocks() - 1);
   assert(block_end == num_nodes());
   assert(delta_block_index.size() == num_instructions);
   return delta_block_index;
@@ -485,9 +561,10 @@ void StrAppendList(std::stringstream& buffer, std::string_view list_name,
   buffer << list_name << " = [";
   bool first = true;
   for (const auto& item : items) {
-    if (!first) {
-      buffer << ",";
+    if (first) {
       first = false;
+    } else {
+      buffer << ", ";
     }
     buffer << item;
   }
@@ -499,11 +576,14 @@ std::string BasicBlockGraphBuilder::DebugString() const {
   std::stringstream buffer;
 
   buffer << "num_graphs = " << num_graphs() << "\n";
+  buffer << "num_blocks = " << num_blocks() << "\n";
   buffer << "num_nodes = " << num_nodes() << "\n";
   buffer << "num_edges = " << num_edges() << "\n";
   buffer << "num_node_tokens = " << num_node_tokens() << "\n";
   StrAppendList(buffer, "num_nodes_per_block", num_nodes_per_block());
   StrAppendList(buffer, "num_edges_per_block", num_edges_per_block());
+  StrAppendList(buffer, "num_nodes_per_trace", num_nodes_per_trace());
+  StrAppendList(buffer, "num_edges_per_trace", num_edges_per_trace());
   StrAppendList(buffer, "node_types", node_types());
   StrAppendList(buffer, "edge_senders", edge_senders());
   StrAppendList(buffer, "edge_receivers", edge_receivers());
