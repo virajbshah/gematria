@@ -99,6 +99,10 @@ def main(argv: Sequence[str]) -> None:
         if e.status.code() == status.StatusCode.OUT_OF_RANGE:
           logging.info(f'Wrote {num_protos_written} proto(s).')
           break
+        elif e.status.code() == status.StatusCode.INTERNAL:
+          # Should indicate disassembly failure for one trace.
+          logging.warning(f'Skipping block: {e.status.message()}')
+          continue
         else:
           raise e
 
@@ -107,6 +111,7 @@ def main(argv: Sequence[str]) -> None:
       logging.log_every_n(
           logging.INFO, f'Wrote {num_protos_written} proto(s).', 1000
       )
+      if num_protos_written == 4096: break
 
 
 if __name__ == '__main__':
