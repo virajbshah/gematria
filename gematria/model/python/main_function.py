@@ -130,17 +130,17 @@ _MASTER = flags.DEFINE_string(
     '',
     'The BNS of the TensorFlow runtime to use for the processing.',
 )
-_GEMATRIA_MAX_BLOCKS_IN_BATCH = flags.DEFINE_integer(
-    'gematria_max_blocks_in_batch',
+_GEMATRIA_MAX_TRACES_IN_BATCH = flags.DEFINE_integer(
+    'gematria_max_traces_in_batch',
     None,
     (
-        'The maximal number of basic blocks in a single batch. In training'
-        ' mode, this option also triggers mini-batch training, and the size of'
-        ' each batch does not exceed this limit. In eval mode, the evaluation'
-        ' will be done on a single batch whose size does not exceed this limit.'
-        ' In prediction mode the input is split into batches that preserve the'
-        ' original order of the basic blocks and where none of the batches'
-        ' exceeds this limit'
+        'The maximal number of basic block traces in a single batch. In'
+        ' training mode, this option also triggers mini-batch training, and the'
+        ' size of each batch does not exceed this limit. In eval mode, the'
+        ' evaluation will be done on a single batch whose size does not exceed'
+        ' this limit. In prediction mode the input is split into batches that'
+        ' preserve the original order of the traces and where none of the'
+        ' batches exceeds this limit'
     ),
 )
 _GEMATRIA_MAX_INSTRUCTIONS_IN_BATCH = flags.DEFINE_integer(
@@ -153,7 +153,7 @@ _GEMATRIA_MAX_INSTRUCTIONS_IN_BATCH = flags.DEFINE_integer(
         ' serialized protocol buffers when processing data sets with large'
         ' basic blocks. In training mode, this puts an additional constraint to'
         ' batch selection, and may raduce the number of basic blocks in a given'
-        ' batch below --gematria_training_max_blocks_in_batch. In eval mode,'
+        ' batch below --gematria_training_max_traces_in_batch. In eval mode,'
         ' this option may cause some basic blocks to be dropped when they would'
         ' exceed the instruction limit. In prediction mode, the batches may be'
         ' dowsized to fit into the limit; basic blocks with more instructions'
@@ -601,12 +601,12 @@ def _resume_previous_experiment_if_needed():
   logging.info('Hacking checkpoint files done.')
 
 
-def _make_basic_block_reader_from_command_line_flags(
+def _make_trace_reader_from_command_line_flags(
     input_files: Sequence[str], source_filter_list: Sequence[str]
-) -> Iterable[throughput_pb2.BasicBlockWithThroughputProto]:
-  """Creates a reader that enumerates basic block protos from the input file.
+) -> Iterable[throughput_pb2.BasicBlockWithThroughputListProto]:
+  """Creates a reader that enumerates trace protos from the input file.
 
-  Reads the basic blocks from a collection of TFRecord files file `input_files`.
+  Reads the traces from a collection of TFRecord files file `input_files`.
   Apart from reading the protos, the reader does the following transformations:
     * when source_filter is not empty, it modifies the inverse throughput data
       for each block so that the number of throughputs in the proto is the same
@@ -615,7 +615,7 @@ def _make_basic_block_reader_from_command_line_flags(
       filter, an empty throughput proto is used at that index. All other
       throughput sources are removed. Note that this process may repeat some
       throughputs multiple times if their source name matches multiple filters.
-    * it removes all basic blocks with no inverse throughput information.
+    * it removes all traces with no inverse throughput information.
 
   The reader is built as a wrapper over tfrecord.read_protos and has the
   following properties:
@@ -654,7 +654,7 @@ def _make_basic_block_reader_from_command_line_flags(
       throughput_selection = io_options.ThroughputSelection.MEAN
     proto_filters.append(
         functools.partial(
-            utils.drop_blocks_with_no_throughputs,
+            utils.drop_traces_with_no_throughputs,
             _GEMATRIA_USE_SEQ2SEQ_LOSS.value,
         )
     )
@@ -667,34 +667,35 @@ def _make_basic_block_reader_from_command_line_flags(
       )
 
   protos = tfrecord.read_protos(
-      input_files, throughput_pb2.BasicBlockWithThroughputProto
+      input_files, throughput_pb2.BasicBlockWithThroughputListProto
   )
   return utils.apply_filters(protos, proto_filters)
 
 
-def _extract_basic_blocks_with_throughput(
+def _extract_traces_with_throughput(
     model: model_base.ModelBase,
-    protos: Iterable[throughput_pb2.BasicBlockWithThroughputProto],
-) -> Iterable[throughput.BasicBlockWithThroughput]:
-  """Parses basic block data from a stream of protos.
+    protos: Iterable[throughput_pb2.BasicBlockWithThroughputListProto],
+) -> Iterable[Sequence[throughput.BasicBlockWithThroughput]]:
+  """Parses basic block trace data from a stream of protos.
 
-  Removes invalid basic blocks if this is requested by command-line flags.
+  Removes invalid traces if this is requested by command-line flags.
 
   Args:
-    model: The Gematria model for which the basic blocks are loaded.
-    protos: A stream of basic block protos with throughput. The stream will be
+    model: The Gematria model for which the traces are loaded.
+    protos: A stream of trace protos with throughput. The stream will be
       iterated over only once.
 
   Yields:
-    Parsed basic block data for the input protos. Yields one basic block with
-    throughput for each proto from the input stream that passes validation by
-    the model.
+    Parsed trace data for the input protos. Yields one trace with throughput for
+    each proto from the input stream that passes validation by the model.
   """
   keep_all_blocks = not _DROP_INVALID_BLOCKS.value
   for proto in protos:
-    block = throughput_protos.block_with_throughput_from_proto(proto)
-    if keep_all_blocks or model.validate_basic_block_with_throughput(block):
-      yield block
+    trace = throughput_protos.block_with_throughput_list_from_proto(proto)
+    if keep_all_blocks or all(
+        model.validate_basic_block_with_throughput(block) for block in trace
+    ):
+      yield trace
 
 
 def _restore_model_from_checkpoint(
@@ -779,34 +780,34 @@ def run_gematria_model_from_command_line_flags(
               'At least one .tfrecord file must be specified through'
               ' --gematria_input_file.'
           )
-        basic_block_protos = _make_basic_block_reader_from_command_line_flags(
+        trace_protos = _make_trace_reader_from_command_line_flags(
             input_files, _THROUGHPUT_SOURCE_FILTERS.value
         )
-        blocks_with_throughput = _extract_basic_blocks_with_throughput(
-            model, basic_block_protos
+        traces_with_throughput = _extract_traces_with_throughput(
+            model, trace_protos
         )
       else:
-        basic_block_protos = None
-        blocks_with_throughput = None
+        trace_protos = None
+        traces_with_throughput = None
     max_instructions_in_batch = _GEMATRIA_MAX_INSTRUCTIONS_IN_BATCH.value
     if _ACTION.value == model_options.Action.EVAL:
       session_hooks = None
       model.run_continuous_evaluation(
-          tuple(blocks_with_throughput),
+          tuple(traces_with_throughput),
           _CHECKPOINT_DIR.value,
           _GEMATRIA_SUMMARY_DIR.value,
           tf_master=_MASTER.value,
           session_hooks=session_hooks,
           eval_interval_seconds=_GEMATRIA_EVAL_INTERVAL_SECS.value,
-          max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+          max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
           max_instructions_in_batch=max_instructions_in_batch,
       )
     elif _ACTION.value == model_options.Action.PREDICT:
       _restore_model_from_checkpoint(_CHECKPOINT_FILE.value, model)
       output_blocks = inference.predict_for_protos(
           model,
-          basic_block_protos,
-          max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+          trace_protos,
+          max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
           max_instructions_in_batch=max_instructions_in_batch,
       )
       tfrecord.write_protos(_GEMATRIA_OUTPUT_FILE.value, output_blocks)
@@ -851,8 +852,8 @@ def run_gematria_model_from_command_line_flags(
           )
       ):
         model.train(
-            tuple(blocks_with_throughput),
-            max_blocks_in_batch=_GEMATRIA_MAX_BLOCKS_IN_BATCH.value,
+            tuple(traces_with_throughput),
+            max_traces_in_batch=_GEMATRIA_MAX_TRACES_IN_BATCH.value,
             max_instructions_in_batch=max_instructions_in_batch,
             num_epochs=_GEMATRIA_TRAINING_NUM_EPOCHS.value,
             randomize_batches=_GEMATRIA_TRAINING_RANDOMIZE_BATCHES.value,

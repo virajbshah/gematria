@@ -21,8 +21,10 @@
 
 #include "gematria/basic_block/basic_block.h"
 #include "gematria/proto/annotation.pb.h"
+#include "gematria/proto/basic_block.pb.h"
 #include "gematria/proto/canonicalized_instruction.pb.h"
 #include "google/protobuf/repeated_ptr_field.h"
+#include "llvm/ADT/STLExtras.h"
 
 namespace gematria {
 
@@ -179,9 +181,18 @@ CanonicalizedInstructionProto ProtoFromInstruction(
 }
 
 BasicBlock BasicBlockFromProto(const BasicBlockProto& proto) {
-  return BasicBlock(
-      /* instructions = */ ToVector<Instruction>(
-          proto.canonicalized_instructions(), InstructionFromProto));
+  BasicBlock basic_block(
+      /* instructions = */
+      ToVector<Instruction>(proto.canonicalized_instructions(),
+                            InstructionFromProto));
+
+  for (const auto& [instruction, machine_instruction_proto] :
+       llvm::zip(basic_block.instructions, proto.machine_instructions())) {
+    instruction.address = machine_instruction_proto.address();
+    instruction.size = machine_instruction_proto.machine_code().size();
+  }
+
+  return basic_block;
 }
 
 }  // namespace gematria

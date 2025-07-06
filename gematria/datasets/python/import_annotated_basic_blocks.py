@@ -28,7 +28,7 @@ from absl import logging
 from gematria.datasets.python import annotating_importer
 from gematria.llvm.python import canonicalizer
 from gematria.llvm.python import llvm_architecture_support
-from gematria.proto import basic_block_pb2
+from gematria.proto import throughput_pb2
 from pybind11_abseil import status
 import tensorflow as tf
 
@@ -82,18 +82,31 @@ def main(argv: Sequence[str]) -> None:
   # LLVM triple. As of 2024-08, this is OK, because we support only x86-64
   # anyway.
   canonicalizer_obj = canonicalizer.Canonicalizer.x86_64(llvm)
-  importer = annotating_importer.AnnotatingImporter(canonicalizer_obj)
+  importer = annotating_importer.LBRImporter.create(
+      _INPUT_ELF_FILE.value, _INPUT_PERF_FILE.value, canonicalizer_obj
+  )
 
-  protos = importer.get_annotated_basic_block_protos(
-      _INPUT_ELF_FILE.value,
-      _INPUT_PERF_FILE.value,
+  proto_generator = importer.get_lbr_trace_proto_generator(
       _SOURCE_NAME.value,
   )
 
   with tf.io.TFRecordWriter(_OUTPUT_TFRECORD_FILE.value) as writer:
-    for proto in protos:
+    num_protos_written = 0
+    while True:
+      try:
+        proto = proto_generator()
+      except status.StatusNotOk as e:
+        if e.status.code() == status.StatusCode.OUT_OF_RANGE:
+          logging.info(f'Wrote {num_protos_written} proto(s).')
+          break
+        else:
+          raise e
+
       writer.write(proto.SerializeToString())
-  print(f'Wrote {len(protos)} (pseudo-)basic block(s).')
+      num_protos_written += 1
+      logging.log_every_n(
+          logging.INFO, f'Wrote {num_protos_written} proto(s).', 100
+      )
 
 
 if __name__ == '__main__':

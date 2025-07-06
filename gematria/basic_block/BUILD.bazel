@@ -34,6 +34,7 @@ cc_library(
         "//gematria/proto:basic_block_cc_proto",
         "//gematria/proto:canonicalized_instruction_cc_proto",
         "@com_google_protobuf//:protobuf_lite",
+        "@llvm-project//llvm:Support",
     ],
 )
 

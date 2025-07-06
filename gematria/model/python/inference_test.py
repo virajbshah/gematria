@@ -69,9 +69,9 @@ class TestModel(model_base.ModelBase):
     return 'TestModel'
 
   # @Override
-  def _add_basic_block_to_batch(self, block):
-    num_instructions = len(block.instructions)
-    self.num_visited_blocks += 1
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
+    num_instructions = sum(len(block) for block in blocks)
+    self.num_visited_blocks += len(blocks)
     self.num_scheduled_instructions += num_instructions
     if not self._use_deltas:
       self._batch_collected_outputs.append(
@@ -109,7 +109,7 @@ class PredictForProtosTest(model_test.TestCase):
   def _check_predict(
       self,
       model,
-      max_blocks_in_batch,
+      max_traces_in_batch,
       max_instructions_in_batch,
       expected_batch_sizes,
   ):
@@ -120,7 +120,7 @@ class PredictForProtosTest(model_test.TestCase):
 
     Args:
       model: The model under test.
-      max_blocks_in_batch: The maximal number of basic blocks in a batch, passed
+      max_traces_in_batch: The maximal number of block traces in a batch, passed
         to model.predict().
       max_instructions_in_batch: The maximal number of instructions in a batch,
         passed to model.predict().
@@ -134,7 +134,7 @@ class PredictForProtosTest(model_test.TestCase):
         inference.predict_for_protos(
             model,
             input_protos,
-            max_blocks_in_batch=max_blocks_in_batch,
+            max_traces_in_batch=max_traces_in_batch,
             max_instructions_in_batch=max_instructions_in_batch,
         )
     )

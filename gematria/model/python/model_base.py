@@ -32,7 +32,8 @@ import itertools
 import math
 import os
 import random
-from typing import Optional, TypeVar, Union, TypedDict
+from tkinter import SE
+from typing import Optional, TypeAlias, TypeGuard, TypeVar, Union, TypedDict, cast
 
 from absl import logging
 from gematria.basic_block.python import basic_block
@@ -71,6 +72,10 @@ BlockOrBlockWithThroughput = TypeVar(
     basic_block.BasicBlock,
     throughput.BasicBlockWithThroughput,
 )
+
+# A type representing a sequence representing a trace of either basic blocks
+# or basic blocks with throughput.
+TraceOrTraceWithThroughput: TypeAlias = Sequence[BlockOrBlockWithThroughput]
 
 
 class AddBasicBlockError(Exception):
@@ -777,7 +782,6 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
     return schedule
 
-  @abc.abstractmethod
   def _add_basic_block_to_batch(self, block: basic_block.BasicBlock) -> None:
     """Adds a basic block to the current batch.
 
@@ -787,8 +791,22 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
     Args:
       block: The basic block added to the batch.
     """
+    self._add_basic_blocks_from_trace_to_batch((block,))
+
+  @abc.abstractmethod
+  def _add_basic_blocks_from_trace_to_batch(
+      self, blocks: Sequence[basic_block.BasicBlock]
+  ) -> None:
+    """Adds a basic block trace to the current batch.
+
+    Runs the model-specific code for scheduling the batch and updates all data
+    structures with the results.
+
+    Args:
+      trace: The basic block trace added to the batch.
+    """
     raise NotImplementedError(
-        'ModelBase._add_basic_block_to_batch is not implemented'
+        'ModelBase._add_basic_blocks_from_trace_to_batch is not implemented'
     )
 
   def _add_expected_outputs_to_batch(
@@ -895,40 +913,43 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
   def schedule_batch(
       self,
-      basic_blocks: Sequence[BlockOrBlockWithThroughput],
-      max_blocks_in_batch: Optional[int] = None,
+      blocks_or_traces: Union[
+          Sequence[BlockOrBlockWithThroughput],
+          Sequence[TraceOrTraceWithThroughput],
+      ],
+      max_traces_in_batch: Optional[int] = None,
       max_instructions_in_batch: Optional[int] = None,
       randomize_batch: bool = False,
       randomize_expected_outputs: bool = False,
   ) -> FeedDict:
-    """Creates a feed_dict that covers all basic blocks from basic_blocks.
+    """Creates a feed_dict that covers all basic blocks from block_traces.
 
     This method orchestrates everything; it depends on self._start_batch(),
-    self._add_basic_block_to_batch(), and self._finalize_batch() for
-    model-specific basic block processing.
+    self._add_basic_blocks_from_trace_to_batch(), and self._finalize_batch()
+    for model-specific basic block processing.
 
     The method works in two modes depending on the value of 'randomize_batch':
-     - deterministic mode where blocks are added in the order in which they
-       appear in basic_blocks, subject to the batch size limits. Blocks that are
-       too large to be added to the batch are skipped, and the following blocks
-       are considered until max_blocks_in_batch is attained or until all blocks
-       from basic_blocks are considered.
-     - random mini-batch mode, where the basic blocks are sampled randomly from
-       basic_blocks, subject to the batch size limits.
+     - deterministic mode where traces, or blocks wrapped into traces, are added
+       in the order in which they appear in `traces`, subject to the batch size
+       limits. Traces that are too large to be added to the batch are skipped,
+       and the following traces are considered until max_traces_in_batch is
+       attained or until all traces from block_traces are considered.
+     - random mini-batch mode, where the traces are sampled randomly from
+       `traces`, subject to the batch size limits.
 
      Similarly, the expected outputs in the batch depend on the value of
      'randomize_expected_outputs'.
 
-     Note that both max_blocks_in_batch and max_instructions_in_batch are upper
+     Note that both max_traces_in_batch and max_instructions_in_batch are upper
      bounds on the size of the batch, but they might not be attained unless the
      sizes of the input basic blocks are perfectly aligned with the limits.
 
     Args:
-      basic_blocks: a list of basic_blocks or basic blocks with throughput. When
-        throughputs are provided, the number of entries must correspond to the
-        number of tasks learned by the model.
-      max_blocks_in_batch: The maximal number of basic blocks in the batch. When
-        specified, at most this many basic blocks are added to the batch.
+      blocks_or_traces: a list of basic blocks, basic blocks with throughput, or
+        traces of either. When throughputs are provided, the number of entries
+        must correspond to the number of tasks learned by the model.
+      max_traces_in_batch: The maximal number of traces in the batch. When
+        specified, at most this many traces are added to the batch.
       max_instructions_in_batch: The maximal number of instructions across all
         basic blocks added to the batch.
       randomize_batch: When True, the basic blocks added to the batch are
@@ -945,18 +966,40 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
     Raises:
       ValueError: When `basic_blocks` is empty.
     """
-    num_input_blocks = len(basic_blocks)
-    if num_input_blocks == 0:
-      raise ValueError('basic_blocks must contain at least once block.')
 
-    # The input is a sequence that that contains either only basic blocks with
+    # If the input contains not traces but individual basic blocks, we can wrap
+    # blocks to create a trace of length one for each block.
+    def _are_blocks(
+        blocks_or_traces: Union[
+            Sequence[BlockOrBlockWithThroughput],
+            Sequence[TraceOrTraceWithThroughput],
+        ],
+    ) -> TypeGuard[Sequence[BlockOrBlockWithThroughput]]:
+      return isinstance(
+          blocks_or_traces[0],
+          (basic_block.BasicBlock, throughput.BasicBlockWithThroughput),
+      )
+
+    traces: Sequence[TraceOrTraceWithThroughput]
+    if _are_blocks(blocks_or_traces):
+      traces = [(block,) for block in blocks_or_traces]
+    else:
+      traces = cast(Sequence[TraceOrTraceWithThroughput], blocks_or_traces)
+
+    num_input_traces = len(traces)
+    num_input_blocks = sum(len(trace) for trace in traces)
+    if num_input_blocks == 0:
+      raise ValueError('block_traces must contain at least once block.')
+
+    # The input contains sequences that contain either only basic blocks with
     # throughputs or only basic blocks without throughputs. We can determine
-    # which case it is by looking at the first block of the sequence.
+    # which case it is by looking at the first block of the first trace.
     has_throughputs = isinstance(
-        basic_blocks[0], throughput.BasicBlockWithThroughput
+        traces[0][0],
+        throughput.BasicBlockWithThroughput,
     )
 
-    max_blocks_in_batch = max_blocks_in_batch or num_input_blocks
+    max_traces_in_batch = max_traces_in_batch or num_input_traces
     with timer.scoped('ModelBase.schedule_batch'):
       self._start_batch()
 
@@ -974,77 +1017,88 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
         # TODO(ondrasej): Consider replacing this with a fairer sampling
         # mechanism where we push the rejected blocks to the following batch.
         if max_instructions_in_batch:
-          num_blocks_in_sample = min(
-              (3 * max_blocks_in_batch) // 2, num_input_blocks
+          num_traces_in_sample = min(
+              (3 * max_traces_in_batch) // 2, num_input_traces
           )
         else:
-          num_blocks_in_sample = min(max_blocks_in_batch, num_input_blocks)
-        basic_blocks = random.sample(basic_blocks, num_blocks_in_sample)
+          num_traces_in_sample = min(max_traces_in_batch, num_input_traces)
+        traces = random.sample(traces, num_traces_in_sample)
 
       num_instructions_in_batch = 0
       num_blocks_in_batch = 0
-      for block_or_block_with_throughputs in basic_blocks:
-        if num_blocks_in_batch == max_blocks_in_batch:
+      num_traces_in_batch = 0
+      for trace_or_trace_with_throughputs in traces:
+        if num_traces_in_batch == max_traces_in_batch:
           break
 
-        block: basic_block.BasicBlock = (
-            block_or_block_with_throughputs.block
-            if has_throughputs
-            else block_or_block_with_throughputs
-        )
+        trace: Sequence[basic_block.BasicBlock] = [
+            trace_segment.block if has_throughputs else trace_segment
+            for trace_segment in trace_or_trace_with_throughputs
+        ]
         if has_throughputs:
-          block_with_throughputs: throughput.BasicBlockWithThroughput = (
-              block_or_block_with_throughputs
-          )
+          trace_with_throughputs: Sequence[
+              throughput.BasicBlockWithThroughput
+          ] = trace_or_trace_with_throughputs
 
-        num_instructions_in_block = len(block.instructions)
+        num_instructions_in_trace = sum(
+            len(block.instructions) for block in trace
+        )
 
         if max_instructions_in_batch:
-          if num_instructions_in_block > max_instructions_in_batch:
-            # A single basic block has more instruction than what is allowed by
+          if num_instructions_in_trace > max_instructions_in_batch:
+            # A single trace has more instructions than what is allowed by
             # the limit on the number of instructions per batch. We skip it and
             # print a warning to the log.
             logging.warn(
                 (
-                    'A single basic block has more instructions (%d) than'
+                    'A single trace has more instructions (%d) than'
                     ' max_instructions_in_batch (%d)'
                 ),
-                num_instructions_in_block,
+                num_instructions_in_trace,
                 max_instructions_in_batch,
             )
             continue
-          num_instructions_with_block = (
-              num_instructions_in_batch + num_instructions_in_block
+          num_instructions_with_trace = (
+              num_instructions_in_batch + num_instructions_in_trace
           )
-          if num_instructions_with_block > max_instructions_in_batch:
-            # Adding this basic block to the batch would exceed the maximal
+          if num_instructions_with_trace > max_instructions_in_batch:
+            # Adding this trace to the batch would exceed the maximal
             # number of instructions in the batch.
             continue
 
-        self._add_basic_block_to_batch(block)
-        num_prefixes = len(block.instructions)
+        self._add_basic_blocks_from_trace_to_batch(trace)
+        trace_num_prefixes = [len(block.instructions) for block in trace]
         if has_throughputs:
-          self._add_expected_outputs_to_batch(
-              throughputs=block_with_throughputs.throughputs,
-              randomize_expected_outputs=randomize_expected_outputs,
-              num_prefixes=(num_prefixes if self.use_deltas else None),
-          )
-        if self._create_delta_block_index:
-          assert num_prefixes == num_instructions_in_block
-          if self._batch_delta_block_index is None:
-            raise ValueError(
-                'ModelBase._batch_delta_block_index is None when creating delta'
-                ' block index while creating a feed_dict.'
+          trace_throughputs = [
+              block.throughputs for block in trace_with_throughputs
+          ]
+          for block, block_throughputs, block_num_prefixes in zip(
+              trace, trace_throughputs, trace_num_prefixes
+          ):
+            self._add_expected_outputs_to_batch(
+                throughputs=block_throughputs,
+                randomize_expected_outputs=randomize_expected_outputs,
+                num_prefixes=(block_num_prefixes if self.use_deltas else None),
             )
-          self._batch_delta_block_index.extend(
-              [num_blocks_in_batch] * num_prefixes
-          )
+        if self._create_delta_block_index:
+          for block, block_num_prefixes in zip(trace, trace_num_prefixes):
+            assert block_num_prefixes == len(block.instructions)
+            if self._batch_delta_block_index is None:
+              raise ValueError(
+                  'ModelBase._batch_delta_block_index is None when creating'
+                  ' delta block index while creating a feed_dict.'
+              )
+            self._batch_delta_block_index.extend(
+                [num_blocks_in_batch] * block_num_prefixes
+            )
+            num_blocks_in_batch += 1
 
-        num_instructions_in_batch += num_instructions_in_block
-        num_blocks_in_batch += 1
+        num_instructions_in_batch += num_instructions_in_trace
+        num_traces_in_batch += 1
 
       logging.info(
-          'ModelBase.schedule_batch: %d blocks, %d instructions',
+          'ModelBase.schedule_batch: %d traces, %d blocks, %d instructions',
+          num_traces_in_batch,
           num_blocks_in_batch,
           num_instructions_in_batch,
       )
@@ -1052,7 +1106,7 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
   def run_continuous_evaluation(
       self,
-      basic_blocks: Sequence[throughput.BasicBlockWithThroughput],
+      traces: Sequence[Sequence[throughput.BasicBlockWithThroughput]],
       checkpoint_dir: str,
       summary_dir: str,
       tf_master: str = '',
@@ -1061,7 +1115,7 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
       session_hooks: Optional[
           Sequence[tf.compat.v1.train.SessionRunHook]
       ] = None,
-      max_blocks_in_batch: Optional[int] = None,
+      max_traces_in_batch: Optional[int] = None,
       max_instructions_in_batch: Optional[int] = None,
   ) -> None:
     """Runs continuous evaluation of the model on the given basic blocks.
@@ -1071,7 +1125,7 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
     step and loss in a provided summary directory.
 
     Args:
-      basic_blocks: A collection of basic blocks that are used for the
+      traces: A collection of basic block traces that are used for the
         evaluation. All blocks in the collection are used in each step of the
         evaluation.
       checkpoint_dir: The checkpoint directory for the model. Trained models are
@@ -1085,14 +1139,14 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
         the evaluation is ran indefinitely.
       session_hooks: An optional list of session hooks that are used in the
         evaluation session.
-      max_blocks_in_batch: The maximal number of basic blocks used in the
-        evaluation batch.
+      max_traces_in_batch: The maximal number of traces used in the evaluation
+        batch.
       max_instructions_in_batch: The maximal number of instructions used in the
         evaluation batch.
     """
     schedule = self.schedule_batch(
-        basic_blocks,
-        max_blocks_in_batch=max_blocks_in_batch,
+        traces,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
         randomize_batch=False,
         randomize_expected_outputs=False,
@@ -1129,38 +1183,42 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
   def predict(
       self,
-      basic_blocks: Iterable[basic_block.BasicBlock],
-      max_blocks_in_batch: Optional[int] = None,
+      traces: Iterable[Sequence[basic_block.BasicBlock]],
+      max_traces_in_batch: Optional[int] = None,
       max_instructions_in_batch: Optional[int] = None,
-  ) -> Iterable[throughput.BasicBlockWithThroughput]:
+  ) -> Iterable[Sequence[throughput.BasicBlockWithThroughput]]:
     """Predicts the inverse throughput using the model.
 
     The input sequence is iterated through only once, and the method may be
     used with basic block sources such as tf.io.tf_record_iterator.
 
     Args:
-      basic_blocks: The collection of basic blocks for which the inverse
+      traces: The collection of basic block traces for which the inverse
         throughput is predicted.
-      max_blocks_in_batch: The maximal number of basic blocks processed in a
-        single batch. When not specified, the number of basic blocks in a batch
-        is unlimited.
+      max_traces_in_batch: The maximal number of traces processed in a single
+        batch. When not specified, the number of traces in a batch is unlimited.
       max_instructions_in_batch: The maximal number of instructions across all
         basic blocks processed in a single batch. When not specified, the number
         of instructions in a batch is unlimited.
 
     Yields:
-      The basic blocks from basic_blocks. Each basic block has a new
+      The basic block traces from `traces`. Each basic block has a new
       inverse_throughputs value added to it with the prediction from the model.
     """
     batches = training.batches(
-        basic_blocks,
-        get_num_instructions=training.get_num_instructions_in_block,
-        max_blocks_in_batch=max_blocks_in_batch,
+        traces,
+        get_num_instructions=training.get_num_instructions_in_trace,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
     )
     for batch_index, batch in enumerate(batches):
-      logging.info('Processing batch %d (%d blocks).', batch_index, len(batch))
-      batch_output_blocks = []
+      logging.info(
+          'Processing batch %d (%d traces, %d blocks).',
+          batch_index,
+          len(batch),
+          sum(len(trace) for trace in batch),
+      )
+      batch_output_traces = []
       with timer.scoped('ModelBase.predict - one batch'):
         schedule = self.schedule_batch(batch)
         output_dict = self(schedule)
@@ -1168,56 +1226,70 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
         if self._use_deltas:
           output_deltas = output_dict['output_deltas']
           output_index = 0
-          for block_index, block in enumerate(batch):
-            block_len = len(block.instructions)
-            # Extract the per-instruction throughput predictions for the basic
-            # block. This has shape (block_len, num_tasks).
-            block_output_deltas = output_deltas[
-                output_index : output_index + block_len
-            ]
-            assert block_output_deltas.shape == (block_len, self.num_tasks)
-            throughputs = []
-            for task_index in range(self.num_tasks):
-              task_output_deltas = block_output_deltas[:, task_index]
-              task_throughputs = throughput.BasicBlockThroughput(
-                  inverse_throughput_cycles=(output[block_index, task_index],),
-                  prefix_inverse_throughput_cycles=tuple(
-                      (delta_throughput,)
-                      for delta_throughput in task_output_deltas
-                  ),
-              )
-              throughputs.append(task_throughputs)
-            output_index += block_len
-            batch_output_blocks.append(
-                throughput.BasicBlockWithThroughput(
-                    block=block, throughputs=throughputs
+          num_blocks_in_output = 0
+          for trace_index, trace in enumerate(batch):
+            trace_output_blocks = []
+            for block_offset, block in enumerate(trace):
+              block_index = num_blocks_in_output + block_offset
+              block_len = len(block.instructions)
+              # Extract the per-instruction throughput predictions for the basic
+              # block. This has shape (block_len, num_tasks).
+              block_output_deltas = output_deltas[
+                  output_index : output_index + block_len
+              ]
+              assert block_output_deltas.shape == (block_len, self.num_tasks)
+              throughputs = []
+              for task_index in range(self.num_tasks):
+                task_output_deltas = block_output_deltas[:, task_index]
+                task_throughputs = throughput.BasicBlockThroughput(
+                    inverse_throughput_cycles=(
+                        output[block_index, task_index],
+                    ),
+                    prefix_inverse_throughput_cycles=tuple(
+                        (delta_throughput,)
+                        for delta_throughput in task_output_deltas
+                    ),
                 )
-            )
-        else:
-          for block_index, block in enumerate(batch):
-            throughputs = []
-            for task_index in range(self.num_tasks):
-              throughputs.append(
-                  throughput.BasicBlockThroughput(
-                      inverse_throughput_cycles=(
-                          output[block_index, task_index],
-                      )
+                throughputs.append(task_throughputs)
+              output_index += block_len
+              trace_output_blocks.append(
+                  throughput.BasicBlockWithThroughput(
+                      block=block, throughputs=throughputs
                   )
               )
-            batch_output_blocks.append(
-                throughput.BasicBlockWithThroughput(
-                    block=block, throughputs=throughputs
+            batch_output_traces.append(trace_output_blocks)
+            num_blocks_in_output += len(trace)
+        else:
+          num_blocks_in_output = 0
+          for trace_index, trace in enumerate(batch):
+            trace_output_blocks = []
+            for block_offset, block in enumerate(trace):
+              block_index = num_blocks_in_output + block_offset
+              throughputs = []
+              for task_index in range(self.num_tasks):
+                throughputs.append(
+                    throughput.BasicBlockThroughput(
+                        inverse_throughput_cycles=(
+                            output[block_index, task_index],
+                        )
+                    )
                 )
-            )
+              trace_output_blocks.append(
+                  throughput.BasicBlockWithThroughput(
+                      block=block, throughputs=throughputs
+                  )
+              )
+            batch_output_traces.append(trace_output_blocks)
+            num_blocks_in_output += len(trace)
 
-      for output_block in batch_output_blocks:
-        yield output_block
+      for output_trace in batch_output_traces:
+        yield output_trace
 
   def train(
       self,
-      basic_block_list: Sequence[throughput.BasicBlockWithThroughput],
+      traces: Sequence[Sequence[throughput.BasicBlockWithThroughput]],
       num_epochs: int,
-      max_blocks_in_batch: Optional[int],
+      max_traces_in_batch: Optional[int],
       max_instructions_in_batch: Optional[int],
       randomize_batches: bool = True,
       randomize_expected_outputs: bool = False,
@@ -1226,12 +1298,12 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
     """Runs training of the model on the given training data.
 
     Args:
-      basic_block_list: The collection of input basic blocks.
+      traces: The collection of input basic block traces.
       num_epochs: The number of training steps. This value is used only for
         profiling and logging; the method uses monitored_session.should_stop()
         to decide when to stop the training.
-      max_blocks_in_batch: The maximal number of basic blocks in a single batch;
-        when not specified, the maximal number of basic blocks in the batch is
+      max_traces_in_batch: The maximal number of traces in a single batch;
+        when not specified, the maximal number of traces in the batch is
         unlimited.
       max_instructions_in_batch: The maximal number of instructions in a single
         batch; when not specified, the number of instructions in a batch is
@@ -1253,25 +1325,25 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
       def run_one_epoch():
         return self.train_mini_batch(
-            basic_block_list,
-            max_blocks_in_batch=max_blocks_in_batch,
+            traces,
+            max_traces_in_batch=max_traces_in_batch,
             max_instructions_in_batch=max_instructions_in_batch,
             randomize_expected_outputs=randomize_expected_outputs,
         )
 
     else:
       # Creates an infinite list of batches that respect the limits and that
-      # cycle through the basic blocks in the input list. When the limit on the
-      # number of basic blocks per batch is not specified, we set it so that in
-      # each step we train on basic_block_list, with no repetitions.
-      max_blocks_in_batch = max_blocks_in_batch or len(basic_block_list)
+      # cycle through the traces in the input list. When the limit on the
+      # number of traces per batch is not specified, we set it so that in
+      # each step we train on `traces`, with no repetitions.
+      max_traces_in_batch = max_traces_in_batch or len(traces)
       batches = iter(
           training.batches(
-              itertools.cycle(basic_block_list),
+              itertools.cycle(traces),
               get_num_instructions=(
-                  training.get_num_instructions_in_block_with_throughput
+                  training.get_num_instructions_in_trace_with_throughput
               ),
-              max_blocks_in_batch=max_blocks_in_batch,
+              max_traces_in_batch=max_traces_in_batch,
               max_instructions_in_batch=max_instructions_in_batch,
           )
       )
@@ -1288,7 +1360,7 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
         with tf.profiler.experimental.Trace(
             'train', step_num=epoch_index, _r=1
         ):
-          tf.summary.experimental.set_step(self._global_step)
+          tf.summary.experimental.set_step(self.global_step)
           stats = run_one_epoch()
           logging.info('Training: %s', stats)
           if not hooks:
@@ -1430,19 +1502,18 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
 
   def train_mini_batch(
       self,
-      basic_blocks: Sequence[throughput.BasicBlockWithThroughput],
-      max_blocks_in_batch: int,
+      traces: Sequence[Sequence[throughput.BasicBlockWithThroughput]],
+      max_traces_in_batch: int,
       max_instructions_in_batch: Optional[int] = None,
       randomize_expected_outputs: bool = False,
   ) -> training.TrainingEpochStats:
     """Trains a random mini-batch selected from basic_blocks.
 
     Args:
-      sess: The TensorFlow session the training is running in.
-      basic_blocks: A collection of basic blocks from which the mini-batch is
+      traces: A collection of basic block traces from which the mini-batch is
         taken.
-      max_blocks_in_batch: The maximal number of basic blocks in a single batch.
-        When not specified, the number of blocks is not limited.
+      max_traces_in_batch: The maximal number of traces in a single batch.
+        When not specified, the number of traces is not limited.
       max_instructions_in_batch: The maximal number of instructions in a single
         batch. When not specified, the number of instructions in a batch is not
         limited.
@@ -1454,8 +1525,8 @@ class ModelBase(tf.Module, metaclass=abc.ABCMeta):
       The loss on the mini batch before the training step.
     """
     train_schedule = self.schedule_batch(
-        basic_blocks,
-        max_blocks_in_batch=max_blocks_in_batch,
+        traces,
+        max_traces_in_batch=max_traces_in_batch,
         max_instructions_in_batch=max_instructions_in_batch,
         randomize_batch=True,
         randomize_expected_outputs=randomize_expected_outputs,

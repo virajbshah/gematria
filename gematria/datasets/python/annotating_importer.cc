@@ -14,16 +14,8 @@
 
 #include "gematria/datasets/annotating_importer.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <tuple>
-#include <vector>
-
 #include "gematria/llvm/canonicalizer.h"
-#include "llvm/Support/Error.h"
+#include "pybind11/attr.h"
 #include "pybind11/cast.h"
 #include "pybind11/detail/common.h"
 #include "pybind11/pybind11.h"
@@ -41,41 +33,48 @@ PYBIND11_MODULE(annotating_importer, m) {
 
   py::google::ImportStatusModule();
 
-  py::class_<AnnotatingImporter>(m, "AnnotatingImporter")
+  py::class_<LBRImporter>(m, "LBRImporter")
+      .def_static("create", &LBRImporter::Create, R"()")
       .def(  //
-          py::init<const Canonicalizer* /* canonicalizer */>(),
-          py::arg("canonicalizer"), py::keep_alive<1, 2>(),
-          R"(Initializes a new annotation collector for a given architecture.
-           
-          Args:
-            canonicalizer: The canonicalizer used to disassemble instructions
-              and convert them to the Gematria proto representation.)")
-      .def(  //
-          "get_annotated_basic_block_protos",
-          &AnnotatingImporter::GetAnnotatedBasicBlockProtos,
-          py::arg("elf_file_name"), py::arg("perf_data_file_name"),
-          py::arg("source_name"),
-          R"(Creates annotated BasicBlockProtos from an ELF object and samples.
-          
-          Reads an ELF object along with a corresponding `perf.data`-like file
-          and creates a list of annotated `BasicBlockProto`s consisting of
-          basic blocks from the ELF object annotated using samples from the
-          `perf.data`-like file.
-          
-          Args:
-            elf_file_name: The path to the ELF object from which basic blocks
-              are to be extracted.
-            perf_data_file_name: The path to the `perf.data`-like file from
-              which samples are to be extracted along with LBR data.
-            source_name: The source name the timing data in the annotated
-              `BasicBlockProto`s should be attributed to.
-              
-          Returns:
-            A list of annotated `BasicBlockProto`s.
-            
-          Raises:
-            StatusNotOk: When extracting basic blocks and samples or creating
-              the annotated `BasicBlockProto`s fails.)");
+          "get_lbr_trace_proto_generator", &LBRImporter::GetLBRTraceProtos,
+          py::arg("source"), R"()");
+
+  // py::class_<AnnotatingImporter>(m, "AnnotatingImporter")
+  //     .def(  //
+  //         py::init<const Canonicalizer* /* canonicalizer */>(),
+  //         py::arg("canonicalizer"), py::keep_alive<1, 2>(),
+  //         R"(Initializes a new annotation collector for a given architecture.
+
+  //         Args:
+  //           canonicalizer: The canonicalizer used to disassemble instructions
+  //             and convert them to the Gematria proto representation.)")
+  //     .def(  //
+  //         "get_annotated_basic_block_protos",
+  //         &AnnotatingImporter::GetAnnotatedBasicBlockProtos,
+  //         py::arg("elf_file_name"), py::arg("perf_data_file_name"),
+  //         py::arg("source_name"),
+  //         R"(Creates annotated BasicBlockProtos from an ELF object and
+  //         samples.
+
+  //         Reads an ELF object along with a corresponding `perf.data`-like
+  //         file and creates a list of annotated `BasicBlockProto`s consisting
+  //         of basic blocks from the ELF object annotated using samples from
+  //         the `perf.data`-like file.
+
+  //         Args:
+  //           elf_file_name: The path to the ELF object from which basic blocks
+  //             are to be extracted.
+  //           perf_data_file_name: The path to the `perf.data`-like file from
+  //             which samples are to be extracted along with LBR data.
+  //           source_name: The source name the timing data in the annotated
+  //             `BasicBlockProto`s should be attributed to.
+
+  //         Returns:
+  //           A list of annotated `BasicBlockProto`s.
+
+  //         Raises:
+  //           StatusNotOk: When extracting basic blocks and samples or creating
+  //             the annotated `BasicBlockProto`s fails.)");
 }
 
 }  // namespace gematria

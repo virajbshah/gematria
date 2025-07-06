@@ -15,7 +15,7 @@
 
 import abc
 from collections.abc import MutableSequence
-from typing import Optional
+from typing import Optional, Sequence
 
 from gematria.basic_block.python import basic_block
 from gematria.model.python import model_base
@@ -154,3 +154,12 @@ class SequenceModelBase(token_model.TokenModel, model_base.ModelBase):
       tokens = instruction.as_token_list()
       self._batch_num_tokens_per_instruction.append(len(tokens))
       self._batch_tokens.extend(self._token_index(token) for token in tokens)
+
+  # @Override
+  def _add_basic_blocks_from_trace_to_batch(
+      self, blocks: Sequence[basic_block.BasicBlock]
+  ) -> None:
+    """See base class."""
+    raise NotImplementedError(
+        'Sequence models currently do not support traces.'
+    )

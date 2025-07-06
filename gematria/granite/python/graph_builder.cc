@@ -14,13 +14,11 @@
 
 #include "gematria/granite/graph_builder.h"
 
-#include <set>
 #include <string>
 #include <vector>
 
 #include "absl/strings/string_view.h"
 #include "gematria/model/oov_token_behavior.h"
-#include "gematria/proto/canonicalized_instruction.pb.h"
 #include "pybind11/cast.h"
 #include "pybind11/detail/common.h"
 #include "pybind11/pybind11.h"
@@ -62,6 +60,7 @@ PYBIND11_MODULE(graph_builder, m) {
       .value("ADDRESS_INDEX_REGISTER", EdgeType::kAddressIndexRegister)
       .value("ADDRESS_SEGMENT_REGISTER", EdgeType::kAddressSegmentRegister)
       .value("ADDRESS_DISPLACEMENT", EdgeType::kAddressDisplacement)
+      .value("TAKEN_BRANCH", EdgeType::kTakenBranch)
       .value("INSTRUCTION_PREFIX", EdgeType::kInstructionPrefix)
       .export_values();
 
@@ -82,19 +81,23 @@ PYBIND11_MODULE(graph_builder, m) {
           py::arg("out_of_vocabulary_behavior"))
       .def("add_basic_block", &BasicBlockGraphBuilder::AddBasicBlock,
            py::arg("block"))
-      .def("add_basic_block_from_instructions",
-           &BasicBlockGraphBuilder::AddBasicBlockFromInstructions,
-           py::arg("instructions"))
+      .def("add_basic_blocks_from_trace",
+           &BasicBlockGraphBuilder::AddBasicBlocksFromTrace, py::arg("blocks"))
       .def("reset", &BasicBlockGraphBuilder::Reset)
       .def_property_readonly("num_node_tokens",
                              &BasicBlockGraphBuilder::num_node_tokens)
       .def_property_readonly("num_graphs", &BasicBlockGraphBuilder::num_graphs)
+      .def_property_readonly("num_blocks", &BasicBlockGraphBuilder::num_blocks)
       .def_property_readonly("num_nodes", &BasicBlockGraphBuilder::num_nodes)
       .def_property_readonly("num_edges", &BasicBlockGraphBuilder::num_edges)
       .def_property_readonly("num_nodes_per_block",
                              &BasicBlockGraphBuilder::num_nodes_per_block)
       .def_property_readonly("num_edges_per_block",
                              &BasicBlockGraphBuilder::num_edges_per_block)
+      .def_property_readonly("num_nodes_per_trace",
+                             &BasicBlockGraphBuilder::num_nodes_per_trace)
+      .def_property_readonly("num_edges_per_trace",
+                             &BasicBlockGraphBuilder::num_edges_per_trace)
       .def_property_readonly("node_features",
                              &BasicBlockGraphBuilder::node_features)
       .def_property_readonly("instruction_node_mask",
