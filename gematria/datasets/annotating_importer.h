@@ -18,6 +18,8 @@
 #define THIRD_PARTY_GEMATRIA_GEMATRIA_DATASETS_ANNOTATING_IMPORTER_H_
 
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,131 +31,179 @@
 #include "gematria/datasets/bhive_importer.h"
 #include "gematria/llvm/canonicalizer.h"
 #include "gematria/llvm/disassembler.h"
-#include "gematria/llvm/llvm_to_absl.h"
 #include "gematria/proto/throughput.pb.h"
-#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ELFTypes.h"
-#include "llvm/Support/Error.h"
 #include "quipper/perf_data.pb.h"
 #include "quipper/perf_parser.h"
 #include "quipper/perf_reader.h"
 
 namespace gematria {
 
-// Importer for annotated basic blocks.
-class AnnotatingImporter {
+class PerfEventImporter {
  public:
-  // Creates a new annotation collector from a given canonicalizer. The
-  // canonicalizer must be for the architecture/microarchitecture of the data
-  // set. Does not take ownership of the canonicalizer.
-  explicit AnnotatingImporter(const Canonicalizer* canonicalizer);
+  struct SampleTable {
+    std::vector<std::string> sample_type_names;
+    std::unordered_map<uint64_t, std::vector<int>> samples_at_ip;
+  };
 
-  // Reads an ELF object along with a corresponding `perf.data`-like file and
-  // returns a vector of annotated `BasicBlockProto`s consisting of basic blocks
-  // from the ELF object annotated using samples from the `perf.data`-like file.
-  absl::StatusOr<std::vector<BasicBlockWithThroughputProto>>
-  GetAnnotatedBasicBlockProtos(std::string_view elf_file_name,
-                               std::string_view perf_data_file_name,
-                               std::string_view source_name);
-
- private:
-  // Loads a `perf.data`-like file for use by the importer. The returned pointer
-  // is valid only as long as this instance of `AnnotatingImporter` is alive.
-  absl::StatusOr<const quipper::PerfDataProto*> LoadPerfData(
-      std::string_view file_name);
+  // Creates and returns a `PerfEventImporter` that loads a `perf.data`-like
+  // file from `perf_data_path`.
+  static absl::StatusOr<PerfEventImporter> Create(
+      std::string_view perf_data_path);
 
   // Searches all MMap events for the one that most likely corresponds to the
-  // executable load segment of the given object.
+  // executable load segment with the given `binary_basename`.
   // This requires that the ELF object's filename has not changed from when it
   // was profiled, since we check its name against the filenames from the
   // recorded MMap events. Note the object file can still be moved, since we
   // check only the name and not the path.
   // TODO(virajbshah): Find a better way to identify the relevant mapping.
-  absl::StatusOr<const quipper::PerfDataProto_MMapEvent*> GetMainMapping(
+  absl::StatusOr<const quipper::PerfDataProto::MMapEvent*>
+  GetMMapEventForBinary(std::string_view binary_basename);
+
+  // Extracts samples corresponding to the object with name `binary_basename`.
+  // Returns a tabular format holding `sample_type_name`, a header with the
+  // names of sample types extracted, and `samples_at_ip`, the body mapping
+  // instruction addresses to sample counts. Each count corresponds to the entry
+  // of `sample_type_names` at the same index.
+  absl::StatusOr<SampleTable> GetPerfSampleTable(
+      std::string_view binary_basename);
+
+  // Extracts events from the `perf.data`-like file loaded while creating this
+  // `PerfEventImporter`. Returns a callable, each call to which returns one
+  // perf event. The total number of events returned across all calls to this
+  // callable can be set using `max_num_events`. If this is set to -1, the
+  // number of events returned is not limited. Events can be filtered by
+  // passing a callable taking an event as `event_filter`. Only events for which
+  // this returns true will be included.
+  template <typename Filter>
+  absl::StatusOr<
+      std::function<absl::StatusOr<quipper::PerfDataProto::PerfEvent>()>>
+  GetPerfEvents(
+      std::string_view binary_basename, int max_num_events = -1,
+      Filter event_filter = [](auto... args) { return true; });
+
+ private:
+  explicit PerfEventImporter()
+      : perf_reader_(std::make_unique<quipper::PerfReader>()) {};
+
+  // Owns the `PerfDataProto` that samples and branch records are read from.
+  std::unique_ptr<quipper::PerfReader> perf_reader_;
+};
+
+class LBRImporter {
+  using AddressRange = std::pair<uint64_t, uint64_t>;
+  struct LBRBlockData {
+    AddressRange address_range;
+    uint32_t latency;
+  };
+  using LBRTraceData = std::vector<LBRBlockData>;
+
+ public:
+  // Creates an `LBRImporter` that reads blocks from the binary at `binary_path`
+  // based on branch stacks read from the `perf.data`-like file at
+  // `perf_data_path`. The canonicalizer must be for the
+  // architecture/microarchitecture of the data set. Does not take ownership of
+  // the canonicalizer.
+  static absl::StatusOr<LBRImporter> Create(std::string_view binary_path,
+                                            std::string_view perf_data_path,
+                                            const Canonicalizer* canonicalizer);
+
+  // Extracts basic block trace protos from the `perf.data`-like file loaded
+  // while creating this `LBRImporter`. Returns a callable, each call to which
+  // returns one trace proto.
+  absl::StatusOr<
+      std::function<absl::StatusOr<BasicBlockWithThroughputListProto>()>>
+  GetLBRTraceProtos(std::string_view source_name);
+
+ private:
+  explicit LBRImporter(
+      llvm::object::OwningBinary<llvm::object::Binary>&& binary,
       const llvm::object::ELFObjectFileBase* elf_object,
-      const quipper::PerfDataProto* perf_data);
+      PerfEventImporter&& perf_event_importer, BHiveImporter&& bhive_importer)
+      : binary_(std::move(binary)),
+        elf_object_(elf_object),
+        perf_event_importer_(std::move(perf_event_importer)),
+        bhive_importer_(std::move(bhive_importer)) {};
 
-  // Loads a binary into for use by the importer.
-  absl::StatusOr<llvm::object::OwningBinary<llvm::object::Binary>> LoadBinary(
-      std::string_view file_name);
+  // Extracts basic block trace data (addresses and latencies) from the
+  // `perf.data`-like file loaded while creating this `LBRImporter`. Returns
+  // a callable, each call to which returns data for one trace.
+  absl::StatusOr<std::function<absl::StatusOr<LBRTraceData>()>>
+  GetLBRTraceData();
 
-  // Returns a pointer inside the loaded binary casted down to an ELF object.
-  // The pointer is only valid for as long as the passed pointer to binary is.
-  absl::StatusOr<llvm::object::ELFObjectFileBase const*> GetELFFromBinary(
-      const llvm::object::Binary* binary);
+  // Disassembles and returns instructions between two addresses from the binary
+  // loaded while creating this `LBRImporter`.
+  absl::StatusOr<std::vector<DisassembledInstruction>>
+  GetInstructionsInAddressRange(AddressRange address_range, uint64_t offset);
 
-  // Returns the program header corresponding to the main executable section.
-  template <class ELFT>
-  absl::StatusOr<llvm::object::Elf_Phdr_Impl<ELFT>> GetMainProgramHeader(
-      const llvm::object::ELFObjectFile<ELFT>* elf_object);
+  // Disassembles and returns a single instruction at a given address from the
+  // binary loaded while creating this `LBRImporter`.
+  absl::StatusOr<DisassembledInstruction> GetInstructionAtAddress(
+      uint64_t address, uint64_t offset);
 
-  // Disassembles and returns instructions between two addresses in an ELF
-  // object.
-  absl::StatusOr<std::vector<DisassembledInstruction>> GetELFSlice(
-      const llvm::object::ELFObjectFileBase* elf_object, uint64_t range_begin,
-      uint64_t range_end, uint64_t offset);
+  // Handles to the binary data is imported from. `binary_` owns the underlying
+  // object, while `elf_object_` provides convenient access to it.
+  llvm::object::OwningBinary<llvm::object::Binary> binary_;
+  const llvm::object::ELFObjectFileBase* elf_object_;
 
-  // Extracts basic blocks from an ELF object, and returns them as tuple
-  // consisting the begin address, end address, and a vector of
-  // `DisassembledInstruction`s belonging to the basic block.
-  // TODO(virajbshah): Remove/refactor this in favor of having a single library
-  // for extracting basic blocks i.e. merge with `extract_bbs_from_obj`.
-  absl::StatusOr<std::vector<std::vector<DisassembledInstruction>>>
-  GetBlocksFromELF(const llvm::object::ELFObjectFileBase* elf_object);
+  PerfEventImporter perf_event_importer_;
+  BHiveImporter bhive_importer_;
+};
 
-  // Extracts samples belonging to `mapping` from the `perf_data`. Returns a
-  // {`sample_types`, `samples`} pair. `sample_types` is a vector of sample
-  // type names, while `samples` is a mapping between sample addresses and the
-  // corresponding sample values.
-  // The ordering of the sample values matches the ordering of types in the
-  // heading.
-  absl::StatusOr<std::pair<std::vector<std::string>,
-                           std::unordered_map<uint64_t, std::vector<int>>>>
-  GetSamples(const quipper::PerfDataProto* perf_data,
-             const quipper::PerfDataProto_MMapEvent* mapping);
+// Importer for annotated basic blocks and traces.
+class AnnotatingImporter {
+ public:
+  // Creates a new annotation collector from a given canonicalizer. The
+  // canonicalizer must be for the architecture/microarchitecture of the data
+  // set. Does not take ownership of the canonicalizer.
+  explicit AnnotatingImporter(const Canonicalizer* canonicalizer)
+      : importer_(canonicalizer) {};
 
-  // Extracts start and end pairs belonging to the given mapping, as well as
-  // their latencies in cycles, of sequences of straight-run code from
-  // LBR branch stacks (pseudo-basic blocks).
-  absl::StatusOr<std::vector<
-      std::pair<std::vector<DisassembledInstruction>, std::vector<uint32_t>>>>
-  GetLBRBlocksWithLatency(const llvm::object::ELFObjectFileBase* elf_object,
-                          const quipper::PerfDataProto* perf_data,
-                          const quipper::PerfDataProto_MMapEvent* mapping);
+  // Reads an ELF object along with a corresponding `perf.data`-like file and
+  // returns a vector of annotated `BasicBlockProto`s consisting of basic blocks
+  // from the ELF object annotated using samples from the `perf.data`-like file.
+  absl::StatusOr<
+      std::function<absl::StatusOr<BasicBlockWithThroughputListProto>()>>
+  GetAnnotatedBasicBlockProtos(std::string_view elf_file_name,
+                               std::string_view perf_data_file_name,
+                               std::string_view source_name);
 
+ private:
   BHiveImporter importer_;
 
   // Owns the `PerfDataProto` that samples and branch records are read from.
   quipper::PerfReader perf_reader_;
 };
 
-template <class ELFT>
-absl::StatusOr<llvm::object::Elf_Phdr_Impl<ELFT>>
-AnnotatingImporter::GetMainProgramHeader(
-    const llvm::object::ELFObjectFile<ELFT>* elf_object) {
-  llvm::object::Elf_Phdr_Impl<ELFT> main_header;
-  bool found_main_header = false;
-  auto program_headers = elf_object->getELFFile().program_headers();
-  if (llvm::Error error = program_headers.takeError()) {
-    return LlvmErrorToStatus(std::move(error));
-  }
-  for (const auto& program_header : *program_headers) {
-    if (program_header.p_type == llvm::ELF::PT_LOAD &&
-        program_header.p_flags & llvm::ELF::PF_R &&
-        program_header.p_flags & llvm::ELF::PF_X) {
-      if (found_main_header) {
-        return absl::InvalidArgumentError(
-            "The given object has multiple executable segments. This is"
-            " currently not supported.");
-      }
-      main_header = program_header;
-      found_main_header = true;
-    }
-  }
+template <typename Filter>
+absl::StatusOr<
+    std::function<absl::StatusOr<quipper::PerfDataProto::PerfEvent>()>>
+PerfEventImporter::GetPerfEvents(const std::string_view binary_basename,
+                                 int max_num_events, Filter event_filter) {
+  const quipper::PerfDataProto& perf_data = perf_reader_->proto();
+  const auto& events = perf_data.events();
 
-  return main_header;
+  int num_events = 0;
+  auto sample_generator = [&events, event_it = events.cbegin(), num_events,
+                           max_num_events, event_filter]() mutable
+      -> absl::StatusOr<quipper::PerfDataProto::PerfEvent> {
+    for (; event_it != events.cend() &&
+           (max_num_events == -1 || num_events < max_num_events);
+         ++event_it) {
+      if (event_filter(*event_it)) {
+        const quipper::PerfDataProto::PerfEvent& event = *event_it;
+        ++event_it;
+        ++num_events;
+        return event;
+      }
+    }
+    return absl::OutOfRangeError(
+        "Iteration complete, all events have been returned.");
+  };
+  return sample_generator;
 }
 
 }  // namespace gematria

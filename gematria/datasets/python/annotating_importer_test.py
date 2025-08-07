@@ -55,6 +55,11 @@ _EXPECTED_BASIC_BLOCK_PROTO = basic_block_pb2.BasicBlockProto(
             address=1746,
             machine_code=b"\377\311",
         ),
+        basic_block_pb2.MachineInstructionProto(
+            assembly="\tjne\t-11",
+            address=1748,
+            machine_code=b"\165\365",
+        ),
     ),
     canonicalized_instructions=(
         _CanonicalizedInstructionProto(
@@ -102,6 +107,19 @@ _EXPECTED_BASIC_BLOCK_PROTO = basic_block_pb2.BasicBlockProto(
                 ),
             ),
         ),
+        _CanonicalizedInstructionProto(
+            mnemonic="JNE",
+            llvm_mnemonic="JCC_1",
+            input_operands=(
+                _CanonicalizedOperandProto(
+                    immediate_value=18446744073709551605
+                ),
+                _CanonicalizedOperandProto(immediate_value=5),
+            ),
+            implicit_input_operands=(
+                _CanonicalizedOperandProto(register_name="EFLAGS"),
+            ),
+        ),
     ),
 )
 
@@ -144,7 +162,14 @@ class AnnotatingImporterTest(absltest.TestCase):
                 inverse_throughputs=(
                     throughput_pb2.ThroughputWithSourceProto(
                         source=source_name,
-                        inverse_throughput_cycles=[1.532258064516129],
+                        inverse_throughput_cycles=(
+                            # fmt: off
+                            1, 1, 1, 1, 1, 1, 1, 1, 1,  4, 1, 1, 1, 1, 1, 1, 1,
+                            1, 1, 1, 1, 1, 1, 1, 2, 1, 11, 1, 1, 1, 5, 3, 2, 2,
+                            2, 1, 1, 1, 1, 1, 1, 1, 1,  1, 2, 3, 1, 1, 1, 3, 1,
+                            2, 1, 1, 5, 1, 1, 1, 1, 1,  1, 1,
+                            # fmt: on
+                        ),
                     ),
                 ),
             ),

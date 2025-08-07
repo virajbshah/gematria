@@ -143,13 +143,13 @@ class TestGnnModel(gnn_model_base.GnnModelBase):
     return self.linear_layer(dense_data)
 
   # @Override
-  def _add_basic_block_to_batch(self, block):
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
     graph = nx.DiGraph(
         features=np.zeros(
             self._graph_global_feature_spec.shape, dtype=self.numpy_dtype
         )
     )
-    num_instructions = len(block.instructions)
+    num_instructions = sum(len(block.instructions) for block in blocks)
     for i in range(num_instructions):
       graph.add_node(
           i,
@@ -368,14 +368,14 @@ class TestEncoderDecoderGnnModel(gnn_model_base.GnnModelBase):
     return self._linear_layer(dense_data)
 
   # @Override
-  def _add_basic_block_to_batch(self, block):
+  def _add_basic_blocks_from_trace_to_batch(self, blocks):
     graph = nx.DiGraph(
         features=np.zeros(
             self._graph_global_feature_spec.shape,
             dtype=tf.dtypes.int32.as_numpy_dtype(),
         )
     )
-    num_instructions = len(block.instructions)
+    num_instructions = sum(len(block.instructions) for block in blocks)
     num_edges = 0
     for i in range(num_instructions):
       graph.add_node(

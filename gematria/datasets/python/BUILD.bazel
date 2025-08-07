@@ -97,6 +97,7 @@ gematria_py_binary(
         ":annotating_importer",
         "//gematria/llvm/python:canonicalizer",
         "//gematria/llvm/python:llvm_architecture_support",
+        "//gematria/proto:throughput_py_pb2",
         "//gematria/utils/python:pybind11_abseil_status",
         "@pypi//absl_py",
         "@pypi//tensorflow",
